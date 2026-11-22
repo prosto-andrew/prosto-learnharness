@@ -43,6 +43,8 @@ after(() => {
 });
 
 const { readTool } = await import("../src/agent/tools/read.ts");
+const { setFileAccessPolicy } = await import("../src/agent/tools/file-access.ts");
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 const { createTeacherAgent, createProberAgent, createPracticeAgent } = await import("../src/agent/teacher-agent.ts");
 const { runPdfReaderAgent } = await import("../src/agent/subagents/pdf-reader.ts");
 const { runVisualMaker } = await import("../src/agent/subagents/visual-maker.ts");

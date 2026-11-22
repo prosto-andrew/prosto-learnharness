@@ -26,12 +26,21 @@ import { effectiveSettings } from "./stores.ts";
 /** The wire-callable shape the adapters close over (tests inject a stub). */
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
+function safeHttpUrl(raw: unknown): string | null {
+	if (typeof raw !== "string" || !raw.trim()) return null;
+	try {
+		const protocol = new URL(raw).protocol;
+		return protocol === "http:" || protocol === "https:" ? raw : null;
+	} catch {
+		return null;
+	}
+}
+
 /** Tavily: POST https://api.tavily.com/search — Bearer auth in the
  *  Authorization header (the current documented scheme; the legacy
  *  api_key-in-body form is retired), query + max_results (0–20) in the
  *  JSON body. VERIFIED against docs.tavily.com's OpenAPI, 2026-09-20:
- *  response {results: [{title, url, content, score, …}]}, errors
- *  {detail: {error}}. */
+ *  response {results: [{title, url, content, score, …}]}. */
 export function tavilyProvider(apiKey: string, fetchFn: FetchLike = fetch): SearchProvider {
 	return {
 		id: "tavily",
@@ -45,29 +54,20 @@ export function tavilyProvider(apiKey: string, fetchFn: FetchLike = fetch): Sear
 				body: JSON.stringify({ query, max_results: Math.min(count, 20) }),
 				signal: AbortSignal.timeout(30_000),
 			});
-			if (!resp.ok) {
-				const body = await resp.text();
-				// Their error body is {detail: {error: "…"}} — surface the
-				// message when present, else the raw slice.
-				let detail = body.slice(0, 200);
-				try {
-					const parsed = JSON.parse(body) as { detail?: { error?: string } };
-					if (parsed.detail?.error) detail = parsed.detail.error.slice(0, 200);
-				} catch {
-					/* keep the raw slice */
-				}
-				throw new Error(`Tavily search API ${resp.status}: ${detail}`);
-			}
+			if (!resp.ok) throw new Error(`Tavily search API ${resp.status}`);
 			const data = (await resp.json()) as {
 				results?: Array<{ title?: string; url?: string; content?: string }>;
 			};
 			return (data.results ?? [])
-				.filter((r) => typeof r.url === "string" && r.url)
-				.map((r) => ({
-					title: r.title ?? r.url ?? "",
-					url: r.url ?? "",
-					snippet: (r.content ?? "").replace(/\n/g, " ").slice(0, 500),
-				}));
+				.flatMap((r) => {
+					const url = safeHttpUrl(r.url);
+					if (!url) return [];
+					return [{
+						title: r.title ?? url,
+						url,
+						snippet: (r.content ?? "").replace(/\n/g, " ").slice(0, 500),
+					}];
+				});
 		},
 	};
 }
@@ -90,20 +90,20 @@ export function braveProvider(apiKey: string, fetchFn: FetchLike = fetch): Searc
 				},
 				signal: AbortSignal.timeout(30_000),
 			});
-			if (!resp.ok) {
-				const body = await resp.text();
-				throw new Error(`Brave search API ${resp.status}: ${body.slice(0, 200)}`);
-			}
+			if (!resp.ok) throw new Error(`Brave search API ${resp.status}`);
 			const data = (await resp.json()) as {
 				web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
 			};
 			return (data.web?.results ?? [])
-				.filter((r) => typeof r.url === "string" && r.url)
-				.map((r) => ({
-					title: r.title ?? r.url ?? "",
-					url: r.url ?? "",
-					snippet: (r.description ?? "").replace(/\n/g, " ").slice(0, 500),
-				}));
+				.flatMap((r) => {
+					const hitUrl = safeHttpUrl(r.url);
+					if (!hitUrl) return [];
+					return [{
+						title: r.title ?? hitUrl,
+						url: hitUrl,
+						snippet: (r.description ?? "").replace(/\n/g, " ").slice(0, 500),
+					}];
+				});
 		},
 	};
 }

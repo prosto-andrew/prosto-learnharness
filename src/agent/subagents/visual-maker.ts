@@ -10,7 +10,7 @@ import { workerRequestStream } from "../worker-request-admission.ts";
 import type { VisualResult } from "../../core/contracts.ts";
 import type { LearnerImage } from "../tools/learner-image.ts";
 import { embedLearnerImage, LEARNER_IMAGE_HREF } from "../../core/learner-image-svg.ts";
-import { annotationPlacementProblem } from "./annotation-svg.ts";
+import { annotationPlacementProblem, staticSvgProblem } from "./annotation-svg.ts";
 import { getHeadless, type HeadlessApi } from "./headless.ts";
 
 /**
@@ -219,7 +219,7 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	/** Image mode: the problem with an SVG that doesn't place the picture
 	 *  exactly once (null = fine, and always fine without an image). */
 	const placementProblem = (svg: string): string | null => {
-		if (!learnerImage) return null;
+		if (!learnerImage) return staticSvgProblem(svg);
 		return annotationPlacementProblem(svg, learnerImage.width, learnerImage.height);
 	};
 	let currentSvg: string | null = null;

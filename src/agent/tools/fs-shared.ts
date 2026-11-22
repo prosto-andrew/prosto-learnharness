@@ -2,7 +2,7 @@ import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AUTH_FILE } from "../../../config.ts";
+import { AUTH_FILE, PATHS } from "../../../config.ts";
 import { comparisonPath, guardSourcePath, isWithin, realSourcePath as realOrMissing, resolvePolicy, type ResolvedFileAccessPolicy } from "./file-access.ts";
 
 /**
@@ -81,6 +81,17 @@ const SENSITIVE_HOME_PATHS = [
 	"AppData/Local/BraveSoftware",
 	"AppData/Local/Microsoft/Edge",
 	"AppData/Roaming/Mozilla",
+	"Library/Application Support/LearnHarness",
+	"AppData/Roaming/LearnHarness",
+	".config/LearnHarness",
+	"Library/Application Support/Claude",
+	"AppData/Roaming/Claude",
+	".config/gh",
+	".pgpass",
+	".my.cnf",
+	".bash_history",
+	".zsh_history",
+	".local/share/keyrings",
 ];
 
 /** Templates are deliberately included: their names do not guarantee safe contents. */
@@ -106,12 +117,18 @@ function isCredentialTemp(absolute: string, directory: string, authBasename: str
 /** String-only check, also usable with synthetic home/credential locations.
  *  The runtime guard below additionally resolves both sources and protected roots.
  *  Only credentials are app-private denials: learning data remains readable. */
-export function isSensitivePath(absolute: string, home: string = os.homedir(), authFile: string = AUTH_FILE): boolean {
+export function isSensitivePath(
+	absolute: string,
+	home: string = os.homedir(),
+	authFile: string = AUTH_FILE,
+	dataDir: string = PATHS.data,
+): boolean {
 	const file = comparisonPath(absolute);
 	return ENV_FILE.test(path.basename(file)) ||
 		SENSITIVE_HOME_PATHS.some((p) => isWithin(file, path.join(home, p), true)) ||
 		credentialFiles(authFile).some((p) => isWithin(file, p)) ||
-		isCredentialTemp(file, path.dirname(authFile), path.basename(comparisonPath(authFile)));
+		isCredentialTemp(file, path.dirname(authFile), path.basename(comparisonPath(authFile))) ||
+		(Boolean(dataDir) && isWithin(file, dataDir));
 }
 
 /** An unrelated inaccessible/broken protected root must not break ordinary
@@ -158,9 +175,12 @@ function sourcePathCheck(home = os.homedir()): (absolute: string) => boolean {
 	const homeRoots = sensitiveHomeLocations(home).map(protectedRealPath);
 	const files = credentialFiles(AUTH_FILE).map(protectedRealPath);
 	const credentialDir = protectedRealPath(path.dirname(AUTH_FILE));
+	const dataRoot = PATHS.data ? protectedRealPath(PATHS.data) : "";
 	return (absolute) => isSensitivePath(absolute, home) ||
 		homeRoots.some((p) => isWithin(absolute, p, true)) ||
-		files.some((p) => isWithin(absolute, p)) || isCredentialTemp(absolute, credentialDir, path.basename(comparisonPath(AUTH_FILE)));
+		files.some((p) => isWithin(absolute, p)) ||
+		isCredentialTemp(absolute, credentialDir, path.basename(comparisonPath(AUTH_FILE))) ||
+		(Boolean(dataRoot) && isWithin(absolute, dataRoot));
 }
 
 function checkedSourcePath(absolute: string, denied: (absolute: string) => boolean): string {
@@ -221,21 +241,31 @@ export function capOutput(lines: string[]): { content: string; truncated: boolea
 	return { content: out.join("\n"), truncated: false };
 }
 
+export const MAX_BRACE_EXPANSIONS = 256;
+
 /** Expand top-level brace alternatives: '*.{ts,tsx}' → ['*.ts', '*.tsx'].
- *  Nested braces are out of scope (pi's fd handles them; models rarely
- *  emit them — a non-expanding literal match is the graceful fallback). */
-export function expandBraces(pattern: string): string[] {
-	const open = pattern.indexOf("{");
-	if (open === -1) return [pattern];
-	const close = pattern.indexOf("}", open);
-	if (close === -1) return [pattern];
-	const before = pattern.slice(0, open);
-	const after = pattern.slice(close + 1);
+ *  Caps total expanded alternatives to prevent exponential combinatorial DoS. */
+export function expandBraces(pattern: string, maxAlts: number = MAX_BRACE_EXPANSIONS): string[] {
 	const alts: string[] = [];
-	for (const alt of pattern.slice(open + 1, close).split(",")) {
-		alts.push(...expandBraces(before + alt + after));
+	function expand(current: string): boolean {
+		const open = current.indexOf("{");
+		if (open === -1) {
+			alts.push(current);
+			return alts.length <= maxAlts;
+		}
+		const close = current.indexOf("}", open);
+		if (close === -1) {
+			alts.push(current);
+			return alts.length <= maxAlts;
+		}
+		const before = current.slice(0, open);
+		const after = current.slice(close + 1);
+		for (const alt of current.slice(open + 1, close).split(",")) {
+			if (!expand(before + alt + after)) return false;
+		}
+		return true;
 	}
-	return alts;
+	return expand(pattern) ? alts : [pattern];
 }
 
 /** Glob → anchored RegExp. '*' stays within a segment, '**' crosses '/',

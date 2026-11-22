@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
+import { readBoundedBytes } from "./bounded-response.ts";
 import { safeFetch } from "./safe-fetch.ts";
 // The search-hit shape lives in the core port since the search wave
 // (2026-09-20); this alias keeps callers churn-free.
@@ -51,15 +52,21 @@ function truncate(text: string): string {
 	return `${text.slice(0, MAX_CONTENT_CHARS)}\n\n[Truncated at ${MAX_CONTENT_CHARS} characters]`;
 }
 
-/** Jina Reader fallback for JS-rendered pages (no deps — plain fetch). */
+/** Jina Reader opt-in fallback (LH_ENABLE_JINA_READER=1), routed via safeFetch
+ *  with bounded streaming reads and never sending query params or credentials. */
 async function fetchViaJina(url: string): Promise<string | null> {
 	try {
-		const res = await fetch(`https://r.jina.ai/${url}`, {
+		const parsed = new URL(url);
+		if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.search || parsed.username || parsed.password) {
+			return null;
+		}
+		const res = await safeFetch(`https://r.jina.ai/${parsed.href}`, {
 			headers: { Accept: "text/markdown", "X-No-Cache": "true" },
 			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 		});
 		if (!res.ok) return null;
-		const content = await res.text();
+		const bytes = await readBoundedBytes(res, MAX_RESPONSE_BYTES, "Response too large");
+		const content = new TextDecoder().decode(bytes);
 		const marker = "Markdown Content:";
 		const start = content.indexOf(marker);
 		if (start < 0) return null;
@@ -105,10 +112,8 @@ async function fetchAndExtract(url: string): Promise<string> {
 	if (/image\/|audio\/|video\/|zip|octet-stream/.test(contentType)) {
 		throw new Error(`Unsupported content type: ${contentType.split(";")[0]}`);
 	}
-	const length = Number(resp.headers.get("content-length") ?? 0);
-	if (length > MAX_RESPONSE_BYTES) throw new Error("Response too large");
-
-	const text = await resp.text();
+	const bytes = await readBoundedBytes(resp, MAX_RESPONSE_BYTES, "Response too large");
+	const text = new TextDecoder().decode(bytes);
 	if (!contentType.includes("html")) return `${sourceLine}\n\n${truncate(text)}`; // plain text / markdown / code
 
 	const extracted = htmlToMarkdown(text);
@@ -116,9 +121,10 @@ async function fetchAndExtract(url: string): Promise<string> {
 		const header = extracted.title ? `# ${extracted.title}\n\n${sourceLine}\n\n---\n\n` : `${sourceLine}\n\n---\n\n`;
 		return header + truncate(extracted.content);
 	}
-	// Readability failed — likely JS-rendered. Try Jina Reader.
-	const jina = await fetchViaJina(url);
-	if (jina) return truncate(jina);
+	if (process.env.LH_ENABLE_JINA_READER === "1") {
+		const jina = await fetchViaJina(url);
+		if (jina) return truncate(jina);
+	}
 	throw new Error("Could not extract readable content (the page may be JavaScript-rendered)");
 }
 

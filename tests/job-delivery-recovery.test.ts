@@ -16,6 +16,8 @@ process.env.LH_AUTH_FILE = path.join(directory, "auth.json");
 fs.writeFileSync(process.env.LH_AUTH_FILE, "{}");
 const { stores } = await import("../src/server/stores.ts");
 const { jobTools } = await import("../src/agent/tools/jobs.ts");
+const { setFileAccessPolicy } = await import("../src/agent/tools/file-access.ts");
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 const { createJobRunner, researchModelOverride } = await import("../src/agent/subagents/runner.ts");
 const { isJobLive } = await import("../src/agent/subagents/aborts.ts");
 const { beginTurn, endTurn } = await import("../src/server/turn-liveness.ts");

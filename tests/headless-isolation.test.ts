@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isIsolatedPageRequestAllowed, loadIsolatedPage } from "../src/agent/subagents/headless.ts";
+import { DEMO_CSP_META, injectDemoCsp, isIsolatedPageRequestAllowed, loadIsolatedPage } from "../src/agent/subagents/headless.ts";
 
 type RequestHandler = (request: unknown) => void;
 
@@ -41,10 +41,11 @@ function fakePage(opts: { url?: string; setContentError?: Error; resetError?: Er
 		},
 	};
 	/** Send one request through every registered handler; returns what they decided. */
-	const request = (url: string) => {
+	const request = (url: string, navigation = false) => {
 		const decisions: string[] = [];
 		const req = {
 			url: () => url,
+			isNavigationRequest: () => navigation,
 			continue: async () => void decisions.push("continue"),
 			abort: async (reason: string) => void decisions.push(`abort ${reason}`),
 		};
@@ -55,23 +56,30 @@ function fakePage(opts: { url?: string; setContentError?: Error; resetError?: Er
 }
 
 describe("isolated page request filter", () => {
-	it("allows web, data, blob and about URLs", () => {
+	it("allows strictly offline data, blob and about URLs, blocking remote http/https", () => {
 		for (const url of [
-			"https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js",
-			"http://example.com/x.js",
 			"data:image/png;base64,AAAA",
 			"blob:null/1b4e28ba-2fa1-11d2-883f-0016d3cca427",
 			"about:blank",
 		]) {
 			assert.equal(isIsolatedPageRequestAllowed(url), true, url);
 		}
+		for (const url of [
+			"https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js",
+			"http://example.com/x.js",
+		]) {
+			assert.equal(isIsolatedPageRequestAllowed(url), false, url);
+		}
 	});
 
-	it("rejects file and browser-internal URLs, whatever their case", () => {
+	it("rejects file, network, javascript and browser-internal URLs, whatever their case", () => {
 		for (const url of [
 			"file:///etc/passwd",
 			"FILE:///Users/someone/.ssh/id_ed25519",
 			"file://localhost/C:/Users/someone/auth.json",
+			"ws://127.0.0.1:3000/ws",
+			"ftp://example.com/file",
+			"javascript:alert(1)",
 			"chrome://settings",
 			"devtools://devtools/bundled/inspector.html",
 			"chrome-extension://abc/x.js",
@@ -83,13 +91,17 @@ describe("isolated page request filter", () => {
 });
 
 describe("loadIsolatedPage", () => {
-	it("writes the markup into about:blank with the filter on, never navigating to a file", async () => {
+	it("writes CSP-hardened markup into about:blank with the offline/navigation filter on", async () => {
 		const fake = fakePage();
 		const cleanup = await loadIsolatedPage(fake.page, "<p>demo</p>");
-		assert.deepEqual(fake.calls, ["on request", "interception true", "setContent <p>demo</p> load"]);
+		assert.deepEqual(fake.calls, ["on request", "interception true", `setContent ${injectDemoCsp("<p>demo</p>")} load`]);
+		assert.ok(fake.calls[2]!.includes(DEMO_CSP_META));
 		assert.ok(!fake.calls.some((call) => call.includes("file:")));
-		assert.deepEqual(fake.request("https://cdn.example/lib.js"), ["continue"]);
+		assert.deepEqual(fake.request("data:image/png;base64,AAAA"), ["continue"]);
+		assert.deepEqual(fake.request("https://cdn.example/lib.js"), ["abort accessdenied"]);
 		assert.deepEqual(fake.request("file:///etc/passwd"), ["abort accessdenied"]);
+		assert.deepEqual(fake.request("data:text/html,<script>1</script>", true), ["abort accessdenied"]);
+		assert.deepEqual(fake.request("about:blank", true), ["abort accessdenied"]);
 		await cleanup();
 	});
 

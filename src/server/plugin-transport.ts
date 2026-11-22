@@ -54,7 +54,15 @@ export function createPluginTransport(deps: { getHost(): Promise<PluginTransport
 		convertDocument: (id: string, request: Request) => guarded(async () => json(await (await deps.getHost()).convertDocument(id, request))),
 		asset: (id: string, segments: string[]) => guarded(async () => {
 			const { bytes, contentType } = (await deps.getHost()).asset(id, segments);
-			return new Response(new Uint8Array(bytes), { headers: { "Content-Type": contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+			const headers: Record<string, string> = {
+				"Content-Type": contentType,
+				"Cache-Control": "no-store",
+				"X-Content-Type-Options": "nosniff",
+			};
+			if (contentType.toLowerCase().startsWith("image/svg+xml")) {
+				headers["Content-Security-Policy"] = "sandbox";
+			}
+			return new Response(new Uint8Array(bytes), { headers });
 		}),
 	};
 }

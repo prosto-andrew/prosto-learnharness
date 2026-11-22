@@ -9,6 +9,8 @@ import { checkImageDimensions, MAX_LEARNER_IMAGE_BYTES } from "../src/agent/tool
 import { createShowImageTool } from "../src/agent/tools/show-image.ts";
 import { annotationPlacementProblem } from "../src/agent/subagents/annotation-svg.ts";
 import { embedLearnerImage } from "../src/core/learner-image-svg.ts";
+import { setFileAccessPolicy } from "../src/agent/tools/file-access.ts";
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 import { chatStore } from "../src/store/chats.ts";
 import { jobTools } from "../src/agent/tools/jobs.ts";
 import { GET } from "../app/api/chats/[id]/images/[snapshotId]/route.ts";

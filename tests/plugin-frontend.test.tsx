@@ -732,7 +732,10 @@ describe("plugin frontend surface and native importer", () => {
 	it("native ESM wrapper is a public module, with no dynamic evaluation or bundled import escape hatch", async () => {
 		const script = await readFile(new URL("../public/plugin-loader.js", import.meta.url), "utf8");
 		const provider = await readFile(new URL("../components/plugins.tsx", import.meta.url), "utf8");
-		assert.match(script, /window\.__lhImportPlugin\s*=.*import\(url\)/);
+		assert.match(script, /window\.__lhImportPlugin\s*=/);
+		assert.match(script, /parsed\.origin\s*!==\s*window\.location\.origin/);
+		assert.match(script, /startsWith\("\/api\/plugins\/"\)/);
+		assert.match(script, /import\(parsed\.href\)/);
 		assert.match(provider, /script\.type = "module"/);
 		assert.match(provider, /script\.src = "\/plugin-loader.js"/);
 		assert.match(provider, /await window\.__lhPluginLoader/);

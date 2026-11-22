@@ -66,6 +66,8 @@ for (const name of [".env", ".env.example", ".env.template", ".ENV.production"])
 
 const { isSensitivePath, resolveSourcePath, sensitiveHomeLocations, walkFiles } = await import("../src/agent/tools/fs-shared.ts");
 const { readTool, createReadTool } = await import("../src/agent/tools/read.ts");
+const { setFileAccessPolicy } = await import("../src/agent/tools/file-access.ts");
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 const { lsTool } = await import("../src/agent/tools/ls.ts");
 const { findTool } = await import("../src/agent/tools/find.ts");
 const { grepTool } = await import("../src/agent/tools/grep.ts");
@@ -99,8 +101,8 @@ describe("source access: configured credentials only", () => {
 		});
 	}
 
-	it("still reads app learning records, ordinary files and non-managed lookalikes", async () => {
-		assert.match(await text(readTool, { path: path.join(data, "chats", "session.json") }), /synthetic learning conversation/);
+	it("protects app data dir while still reading ordinary files and non-managed lookalikes", async () => {
+		await assert.rejects(readTool.execute!("s", { path: path.join(data, "chats", "session.json") }), denied);
 		for (const file of ["home/notes/topic.md", "home/..notes/also.md", "home/.claudette/ok.md", "unrelated/.ssh/notes.md", "keyfiles/custom-keys.json.backup-not-managed", `keyfiles/other.json.tmp-${uuid}`, "keyfiles/custom-keys.json.tmp-not-a-uuid", `unrelated/custom-keys.json.tmp-${uuid}`, "private/logs/main.log"]) {
 			assert.match(await text(readTool, { path: path.join(root, file) }), /ordinary/);
 		}
@@ -108,10 +110,10 @@ describe("source access: configured credentials only", () => {
 		assert.match(await text(lsTool, { path: home }), /\.ssh\//);
 	});
 
-	it("root-wide discovery omits credential targets, temp files, transcripts and dotenv contents", async () => {
+	it("root-wide discovery omits credential targets, temp files, transcripts, app data and dotenv contents", async () => {
 		assert.equal(await text(grepTool, { path: root, pattern: "LH_SYNTHETIC_SECRET_MARKER" }), "No matches found");
 		const found = await text(findTool, { path: root, pattern: "*" });
-		assert.match(found, /data\/chats\/session\.json/);
+		assert.doesNotMatch(found, /data\/chats\/session\.json/i);
 		assert.doesNotMatch(found, /relocated-token|credentials\.json|\.auth\.json\.tmp|transcripts\/|id_ed25519|elsewhere\/\.env/i);
 		assert.ok(!found.split("\n").includes(`keyfiles/custom-keys.json.tmp-${uuid}`));
 	});
@@ -335,8 +337,7 @@ describe("source access: credential case aliases on the fixture filesystem", () 
 		}
 		assert.equal(await text(grepTool, { path: path.join(root, "KEYFILES"), pattern: "LH_SYNTHETIC_SECRET_MARKER" }), "No matches found");
 		const found = await text(findTool, { path: path.join(root, "KEYFILES"), pattern: "*" });
-		assert.doesNotMatch(found, /credentials\.json|\.auth\.json\.tmp/);
-		assert.match(found, /data\/chats\/session\.json/);
+		assert.doesNotMatch(found, /credentials\.json|\.auth\.json\.tmp|data\/chats\/session\.json/);
 	});
 
 	it("protects a non-symlink configured AUTH_FILE regardless of filename or parent-directory case", async (t) => {

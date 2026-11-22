@@ -31,6 +31,8 @@ import { detectSupportedImageMimeTypeFromFile, processImage } from "../image-pro
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 50 * 1024;
+const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES = 10 * 1024 * 1024;
 
 const readInput = Type.Object({
 	path: Type.String({ minLength: 1, description: "Path to the file to read (relative or absolute)" }),
@@ -99,7 +101,15 @@ export function createReadTool(model?: ReadModel): AgentTool<typeof readInput> {
 		parameters: readInput,
 		execute: serverExecute("read", readInput, async ({ path: rawPath, offset, limit }, { signal }): Promise<string | ImageFileResult> => {
 			const absolute = resolveSourcePath(rawPath);
+			const stat = await fs.stat(absolute);
+			if (!stat.isFile()) {
+				throw new Error(`Not a regular file: ${rawPath}`);
+			}
 			const mime = await detectSupportedImageMimeTypeFromFile(absolute);
+			const maxSize = mime ? MAX_IMAGE_FILE_BYTES : MAX_TEXT_FILE_BYTES;
+			if (stat.size > maxSize) {
+				throw new Error(`File too large (${formatSize(stat.size)}; max ${formatSize(maxSize)})`);
+			}
 			const buffer = await fs.readFile(absolute, { signal });
 			if (mime) {
 				const processed = await processImage(buffer, mime, { resizeOptions: model?.inputLimits?.images?.resize });

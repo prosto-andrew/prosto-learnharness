@@ -37,6 +37,7 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 
 // Mirrors SIDEBAR_AUTOCLOSE in components/sidebar.tsx — keep in sync (the
@@ -92,8 +93,20 @@ if (process.argv.includes("--browser-service")) {
 	const { waitForBrowserService } = require("./browser-service-readiness.cjs");
 	// Own the helper's entire startup lifetime, including the readiness wait.
 	const lifetime = new AbortController();
+	let scratchDir = null;
+	const cleanupScratchDir = () => {
+		if (!scratchDir) return;
+		const target = scratchDir;
+		scratchDir = null;
+		try {
+			fs.rmSync(target, { recursive: true, force: true });
+		} catch {
+			/* best effort */
+		}
+	};
 	const parentClosed = () => {
 		lifetime.abort(new Error("browser-service parent IPC disconnected"));
+		cleanupScratchDir();
 		app.quit();
 	};
 	(async () => {
@@ -102,14 +115,41 @@ if (process.argv.includes("--browser-service")) {
 			// real Node IPC channel, and refuse to start an unowned helper.
 			if (!process.channel || !process.connected) throw new Error("browser-service requires connected parent IPC");
 			process.once("disconnect", parentClosed);
+			scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-browser-service-"));
+			app.setPath?.("userData", scratchDir);
+			app.once?.("will-quit", cleanupScratchDir);
+			process.once("exit", cleanupScratchDir);
 			app.dock?.hide();
 			const port = await freePort();
 			// Must land before app-ready for Chromium to pick it up.
 			app.commandLine.appendSwitch("remote-debugging-port", String(port));
 			await app.whenReady();
+			const helperSession = typeof session?.fromPartition === "function"
+				? session.fromPartition("browser-service-ephemeral")
+				: undefined;
+			if (helperSession) {
+				helperSession.setPermissionRequestHandler?.((_wc, _perm, callback) => callback(false));
+				helperSession.setPermissionCheckHandler?.(() => false);
+				helperSession.webRequest?.onBeforeRequest?.((details, callback) => {
+					const allowed = details.url === "about:blank" || /^(?:about|data|blob):/i.test(details.url);
+					callback({ cancel: !allowed });
+				});
+			}
 			// A hidden window keeps the app lifecycle ordinary on every
 			// platform (no window-all-closed handler is installed here).
-			const win = new BrowserWindow({ show: false });
+			const win = new BrowserWindow({
+				show: false,
+				webPreferences: {
+					...(helperSession ? { session: helperSession } : {}),
+					sandbox: true,
+					contextIsolation: true,
+					nodeIntegration: false,
+				},
+			});
+			win.webContents?.setWindowOpenHandler?.(() => ({ action: "deny" }));
+			win.webContents?.on?.("will-navigate", (event, targetUrl) => {
+				if (targetUrl !== "about:blank") event.preventDefault();
+			});
 			await win.loadURL("about:blank");
 			// Window load is not a DevTools HTTP readiness barrier. Confirm the
 			// endpoint before both production and smoke clients see the handshake.
@@ -117,6 +157,7 @@ if (process.argv.includes("--browser-service")) {
 			if (!lifetime.signal.aborted) console.log(`BROWSER_SERVICE_CDP ${port}`);
 		} catch (err) {
 			if (lifetime.signal.aborted) return; // Parent disconnect is normal.
+			cleanupScratchDir();
 			console.error("browser-service failed:", err);
 			app.exit(1);
 		}
@@ -526,6 +567,7 @@ function checkForUpdates({ manual = false } = {}) {
 }
 
 function installUpdateNow() {
+	if (!autoUpdater) return;
 	// Kill the server BEFORE the quit-and-install (see block comment).
 	try {
 		killServer();
@@ -536,44 +578,9 @@ function installUpdateNow() {
 }
 
 function setupAutoUpdater() {
-	if (!app.isPackaged) {
-		log("auto-update: dev build — updater disabled");
-		reportUpdateStatus("disabled");
-		return;
-	}
-	try {
-		autoUpdater = require("electron-updater").autoUpdater;
-	} catch (err) {
-		log(`auto-update: electron-updater unavailable (${err?.message ?? err}) — updates disabled`);
-		reportUpdateStatus("disabled");
-		return;
-	}
-	const feed = process.env.LH_UPDATE_FEED;
-	if (feed) {
-		autoUpdater.setFeedURL({ provider: "generic", url: feed });
-		log(`auto-update: LH_UPDATE_FEED override → ${feed}`);
-	}
-	autoUpdater.autoDownload = true;
-	autoUpdater.autoInstallOnAppQuit = true;
-	// Route every updater log line through the shell's own log (userData/
-	// logs/main.log) — feed failures must be diagnosable after the fact.
-	autoUpdater.logger = {
-		info: (m) => log(`updater: ${m}`),
-		warn: (m) => log(`updater warn: ${m}`),
-		debug: (m) => {}, // too chatty for the persistent log
-		error: (m) => log(`updater error: ${m}`),
-	};
-	autoUpdater.on("checking-for-update", () => reportUpdateStatus("checking"));
-	autoUpdater.on("update-available", (info) => reportUpdateStatus("downloading", info?.version));
-	autoUpdater.on("update-not-available", () => reportUpdateStatus("up-to-date"));
-	autoUpdater.on("update-downloaded", (info) => {
-		log(`update downloaded: ${info?.version} — banner shown`);
-		reportUpdateStatus("downloaded", info?.version);
-	});
-	autoUpdater.on("error", (err) => {
-		log(`updater error: ${err?.message ?? err}`);
-		reportUpdateStatus("error");
-	});
+	autoUpdater = null;
+	log("auto-update: disabled in hardened build");
+	reportUpdateStatus("disabled");
 }
 
 /** One result surface for manual checks. Preload buffers the navigation
@@ -777,7 +784,10 @@ async function main() {
 	// interval fire after it below. setupAutoUpdater's contract: failures
 	// are log lines — this can never block boot.
 	setupAutoUpdater();
-	ipcMain.on("lh:update-install", () => installUpdateNow());
+	ipcMain.on("lh:update-install", (event) => {
+		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) return;
+		installUpdateNow();
+	});
 	ipcMain.handle("lh:update:get", (event) => {
 		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) throw new Error("Untrusted desktop request.");
 		return updateState;
@@ -794,10 +804,13 @@ async function main() {
 	// window grows right. No-op when already wide.
 	// The renderer's first paint can race did-finish-load — it asks for
 	// the current factor itself (mirrors "lh:zoom" pushes).
-	ipcMain.handle("lh:zoom:get", (event) => BrowserWindow.fromWebContents(event.sender)?.webContents.getZoomFactor() ?? 1);
+	ipcMain.handle("lh:zoom:get", (event) => {
+		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) throw new Error("Untrusted desktop request.");
+		return BrowserWindow.fromWebContents(event.sender)?.webContents.getZoomFactor() ?? 1;
+	});
 	ipcMain.on("lh:expand-window", (event) => {
 		const win = BrowserWindow.fromWebContents(event.sender);
-		if (!win) return;
+		if (!win || !trustedAppWindows.has(win) || !trustedSender(event, new URL(url).origin, BrowserWindow)) return;
 		const { x, y, width, height } = win.getBounds();
 		const target = SIDEBAR_AUTOCLOSE;
 		if (width < target) win.setBounds({ x, y, width: target, height });

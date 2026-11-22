@@ -37,5 +37,5 @@ export function parseFileAccessSettings(raw: unknown): FileAccessSettingsResult 
 		const folder = entry.trim();
 		if (!folders.includes(folder)) folders.push(folder);
 	}
-	return { ok: true, settings: { restricted: value.restricted === true, folders } };
+	return { ok: true, settings: { restricted: value.restricted !== false, folders } };
 }

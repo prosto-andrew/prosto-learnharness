@@ -16,14 +16,19 @@ export interface ResolvedFileAccessPolicy {
 	unavailable: readonly string[];
 }
 
-const OPEN_POLICY: FileAccessPolicy = { restricted: false, folders: [] };
-let currentPolicy: () => FileAccessPolicy = () => OPEN_POLICY;
+const CLOSED_POLICY: FileAccessPolicy = { restricted: true, folders: [] };
+const POLICY_KEY = Symbol.for("lh.fileAccessPolicy");
+function policySlot(): { current: () => FileAccessPolicy } {
+	const g = globalThis as Record<symbol, { current: () => FileAccessPolicy } | undefined>;
+	if (!g[POLICY_KEY]) g[POLICY_KEY] = { current: () => CLOSED_POLICY };
+	return g[POLICY_KEY];
+}
 
-export function setFileAccessPolicy(provider: () => FileAccessPolicy): void { currentPolicy = provider; }
+export function setFileAccessPolicy(provider: () => FileAccessPolicy): void { policySlot().current = provider; }
 
 export function fileAccessPolicy(): FileAccessPolicy {
 	let policy: FileAccessPolicy;
-	try { policy = currentPolicy(); }
+	try { policy = policySlot().current(); }
 	catch { throw new Error("File-access configuration error: preferences cannot be read. Repair File access in Settings → Agent → Tools."); }
 	if (policy?.error) throw new Error(policy.error);
 	if (!policy || typeof policy.restricted !== "boolean" || !Array.isArray(policy.folders) || policy.folders.some((folder) => typeof folder !== "string" || !path.isAbsolute(folder) || folder.includes("\0"))) {

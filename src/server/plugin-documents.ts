@@ -20,17 +20,18 @@ export function createPluginDocumentConverter(deps: { convertPdf?: typeof conver
 		async convert(request: Request, signal: AbortSignal): Promise<{ name: string; markdown: string; notices: string[] }> {
 			if (busy) throw new PluginHostError(409, "Document conversion is busy. Please retry.");
 			busy = true;
+			const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
 			try {
-				signal.throwIfAborted();
+				boundedSignal.throwIfAborted();
 				let form: FormData;
 				try {
-					form = await readBoundedFormData(request, MAX_DOCUMENT_BODY_BYTES, signal);
+					form = await readBoundedFormData(request, MAX_DOCUMENT_BODY_BYTES, boundedSignal);
 				} catch (error) {
-					signal.throwIfAborted();
+					boundedSignal.throwIfAborted();
 					if (error instanceof FormBodyLimitError) throw new PluginHostError(413, "Document upload is too large. Max 26 MiB including multipart metadata.");
 					throw new PluginHostError(400, "Could not read the upload. It may be incomplete; please select the file again.");
 				}
-				signal.throwIfAborted();
+				boundedSignal.throwIfAborted();
 				const entries = [...form.entries()];
 				const entry = entries[0];
 				if (entries.length !== 1 || !entry || entry[0] !== "file" || !(entry[1] instanceof File)) {
@@ -39,19 +40,19 @@ export function createPluginDocumentConverter(deps: { convertPdf?: typeof conver
 				const file = entry[1];
 				if (file.size > MAX_DOCUMENT_FILE_BYTES) throw new PluginHostError(413, "Too big. Max 25 MiB.");
 				const bytes = new Uint8Array(await file.arrayBuffer());
-				signal.throwIfAborted();
+				boundedSignal.throwIfAborted();
 				let markdown: string;
 				const notices: string[] = [];
 				if (PDF_MAGIC.every((byte, i) => bytes[i] === byte) || /\.pdf$/i.test(file.name)) {
 					// Await the actual converter, never an abort race: its promise includes
 					// loading-task destruction, which must settle before releasing busy.
 					let pdf;
-					try { pdf = await pdfConverter(bytes, MAX_DOCUMENT_PDF_PAGES, { signal }); }
+					try { pdf = await pdfConverter(bytes, MAX_DOCUMENT_PDF_PAGES, { signal: boundedSignal }); }
 					catch {
-						signal.throwIfAborted();
+						boundedSignal.throwIfAborted();
 						throw new PluginHostError(400, "Could not open this PDF.");
 					}
-					signal.throwIfAborted();
+					boundedSignal.throwIfAborted();
 					if (pdf.kind === "unreadable") throw new PluginHostError(400, "Could not open this PDF.");
 					if (pdf.kind === "too-long") throw new PluginHostError(400, "Too long. Max 1,000 pages.");
 					const skipped = pdf.pages.filter((page) => page.kind === "image-only").length;
@@ -67,7 +68,7 @@ export function createPluginDocumentConverter(deps: { convertPdf?: typeof conver
 					if (CONTROL.test(markdown)) throw new PluginHostError(400, "This document contains binary or control characters, not supported text.");
 					if (!markdown.trim()) throw new PluginHostError(400, "This document contains no text.");
 				}
-				signal.throwIfAborted();
+				boundedSignal.throwIfAborted();
 				if (new TextEncoder().encode(markdown).byteLength > MAX_DOCUMENT_MARKDOWN_BYTES) {
 					throw new PluginHostError(413, "Converted Markdown is too large. Max 2 MiB.");
 				}

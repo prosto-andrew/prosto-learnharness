@@ -538,7 +538,7 @@ export interface FactorySettings {
 export const FACTORY_SETTINGS: FactorySettings = {
 	version: CURRENT_SETTINGS_VERSION,
 	agent: { workerRequestConcurrency: 8 },
-	general: { autoUpdate: true },
+	general: { autoUpdate: false },
 	dictation: { language: "en" },
 	appearance: {
 		theme: "default",

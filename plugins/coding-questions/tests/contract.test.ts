@@ -110,3 +110,23 @@ test("every standard language module can load locally", async () => {
   assert.ok(languages.length > 100);
   for (const language of languages) assert.ok(await language.load(), language.name);
 });
+
+test("validateQuestion and validateProblem enforce bare allowlisted programs and honor LH_CODING_ALLOWED_PROGRAMS", () => {
+  const baseInput = { question: "Q", payload: { language: "js", modelSolution, tests } };
+  assert.equal(definition.validateQuestion!({ input: baseInput } as never), undefined);
+  assert.equal(problemDefinition.validateProblem!({ input: { statement: "S", mode: "composition", payload: { language: "py", tests: { ...tests, program: "python3" } } } } as never), undefined);
+  for (const program of ["bash", "powershell", "/usr/bin/python3", "C:\\node.exe", "curl"]) {
+    const qErr = definition.validateQuestion!({ input: { ...baseInput, payload: { ...baseInput.payload, tests: { ...tests, program } } } } as never);
+    const pErr = problemDefinition.validateProblem!({ input: { statement: "S", payload: { language: "js", tests: { ...tests, program } } } } as never);
+    assert.ok(Array.isArray(qErr) && qErr.length === 1, program);
+    assert.ok(Array.isArray(pErr) && pErr.length === 1, program);
+  }
+  const prev = process.env.LH_CODING_ALLOWED_PROGRAMS;
+  try {
+    process.env.LH_CODING_ALLOWED_PROGRAMS = "bash, custom-runner";
+    assert.equal(definition.validateQuestion!({ input: { ...baseInput, payload: { ...baseInput.payload, tests: { ...tests, program: "custom-runner" } } } } as never), undefined);
+    assert.ok(definition.validateQuestion!({ input: { ...baseInput, payload: { ...baseInput.payload, tests: { ...tests, program: "bash" } } } } as never));
+  } finally {
+    if (prev === undefined) delete process.env.LH_CODING_ALLOWED_PROGRAMS; else process.env.LH_CODING_ALLOWED_PROGRAMS = prev;
+  }
+});

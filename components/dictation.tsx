@@ -151,7 +151,7 @@ function registerController(id: symbol, controller: { primary: boolean; toggle: 
  *  dev-speak, so the error becomes the short client-authored line
  *  (zero-keys wave, owner 2026-09-25). */
 async function mintFreshToken(): Promise<string> {
-	const res = await fetch("/api/stt/token");
+	const res = await fetch("/api/stt/token", { method: "POST" });
 	const data = (await res.json()) as { token?: string; message?: string };
 	if (!res.ok || !data.token) {
 		if (res.status === 503) throw new Error(DICTATION_KEYLESS);

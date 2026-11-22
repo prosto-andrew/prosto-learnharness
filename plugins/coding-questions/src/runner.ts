@@ -1,10 +1,29 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { validateTestProgram } from "./allowlist.ts";
 import type { CodingTestResult, CodingTests } from "./test-result.ts";
 
 const TIMEOUT_MS = 30_000;
 const OUTPUT_LIMIT = 64 * 1024;
+const SAFE_ENV_KEYS = ["PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "LANG", "LC_ALL", "TZ", "TERM"] as const;
+
+/** Minimal allowlisted environment isolated to the ephemeral attempt workspace. */
+export function buildTestEnv(
+  workspace: string,
+  sourceEnv: Record<string, string | undefined> = process.env,
+): NodeJS.ProcessEnv {
+  const env: Record<string, string | undefined> = {};
+  for (const key of SAFE_ENV_KEYS) {
+    if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key];
+  }
+  env.HOME = workspace;
+  env.USERPROFILE = workspace;
+  env.TMP = workspace;
+  env.TEMP = workspace;
+  env.TMPDIR = workspace;
+  return env as NodeJS.ProcessEnv;
+}
 
 function checkAbort(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("Test run aborted", "AbortError");
@@ -59,10 +78,19 @@ async function observeProcess(
     ...(message === undefined ? {} : { message }),
   });
 
+  if (!tests || typeof tests.program !== "string" || !Array.isArray(tests.args) || tests.args.some((a) => typeof a !== "string" || a.includes("\0")) || typeof tests.code !== "string") {
+    return result("error", null, "Could not launch test process: invalid test recipe.");
+  }
+  const validation = validateTestProgram(tests.program, process.env.LH_CODING_ALLOWED_PROGRAMS);
+  if (!validation.ok) {
+    return result("error", null, `Could not launch test process: ${validation.reason}`);
+  }
+
   let child;
   try {
-    child = spawn(tests.program, tests.args, {
+    child = spawn(validation.program, tests.args, {
       cwd,
+      env: buildTestEnv(cwd),
       shell: false,
       // A separate POSIX process group lets us kill descendants even when the
       // driver exits first and its descendants still hold our output pipes.

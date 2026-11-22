@@ -130,18 +130,45 @@ export function parseBrowserServiceLine(line: string): number | null {
 	return port >= 1 && port <= 65535 ? port : null;
 }
 
-/** Spawn env sanitizer (pure; exported for tests): the helper must run as a
- *  FULL Electron app — ELECTRON_RUN_AS_NODE must not leak — and must not
- *  inherit the dev-shell userData redirect. */
+const BROWSER_SAFE_ENV_KEYS = [
+	"PATH",
+	"Path",
+	"PATHEXT",
+	"SystemRoot",
+	"WINDIR",
+	"COMSPEC",
+	"ComSpec",
+	"TEMP",
+	"TMP",
+	"TMPDIR",
+	"HOME",
+	"USERPROFILE",
+	"HOMEDRIVE",
+	"HOMEPATH",
+	"APPDATA",
+	"LOCALAPPDATA",
+	"XDG_RUNTIME_DIR",
+	"XDG_CONFIG_HOME",
+	"XDG_CACHE_HOME",
+	"DISPLAY",
+	"WAYLAND_DISPLAY",
+	"DBUS_SESSION_BUS_ADDRESS",
+	"LANG",
+	"LC_ALL",
+	"TZ",
+	"NODE_ENV",
+	"ELECTRON_ENABLE_LOGGING",
+] as const;
+
+/** Spawn env sanitizer (pure; exported for tests): allowlist-only minimal env
+ *  so ELECTRON_RUN_AS_NODE, LH_* secrets, and BYOK API keys never reach browser processes. */
 export function browserServiceSpawnEnv(
 	env: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
-	const out: Record<string, string | undefined> = { ...env };
-	delete out.ELECTRON_RUN_AS_NODE;
-	delete out.LH_DEV_URL;
-	// The artifact renderer is not an authorized app API client.
-	delete out.LH_DESKTOP_API_SECRET;
-	delete out.LH_DESKTOP_SERVER;
+	const out: Record<string, string | undefined> = {};
+	for (const key of BROWSER_SAFE_ENV_KEYS) {
+		if (env[key] !== undefined) out[key] = env[key];
+	}
 	return out;
 }
 
@@ -277,12 +304,20 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 	// Chrome fallback: per-job launch, close on the way out (old semantics).
 	const puppeteer = (await import("puppeteer-core")).default;
 	const executablePath = resolveChromeExecutablePath();
+	const safeEnv = Object.fromEntries(
+		Object.entries(browserServiceSpawnEnv(process.env)).filter((entry): entry is [string, string] => entry[1] !== undefined),
+	);
 	const browser = await puppeteer.launch({
 		headless: true,
 		// Explicit path when we found one; otherwise let puppeteer resolve the
 		// system Chrome install itself via the "chrome" channel.
 		...(executablePath ? { executablePath } : { channel: "chrome" as const }),
-		args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+		env: safeEnv,
+		args: [
+			"--disable-gpu",
+			...(process.env.LH_CHROME_NO_SANDBOX === "1" ? ["--no-sandbox"] : []),
+			"--disable-dev-shm-usage",
+		],
 	});
 	try {
 		const page = await browser.newPage();
@@ -294,12 +329,25 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 
 // ─── Isolated page loading ───────────────────────────────────────────────────
 // Demo HTML is model output, so it is untrusted.
-// They load in memory on about:blank, which gives the document an opaque
-// origin like the learner's sandboxed iframe. A file:// document could read
-// any local file. As a second layer, requests for any other scheme (file:
-// included) are aborted while the page is loaded.
+// Demos run strictly offline in memory on about:blank (opaque origin) with
+// a restrictive CSP and network/navigation request blocking.
 
-const ISOLATED_PAGE_SCHEMES = new Set(["http:", "https:", "data:", "blob:", "about:"]);
+export const DEMO_CSP_META = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; form-action \'none\'; base-uri \'none\';">';
+
+export function injectDemoCsp(html: string): string {
+	if (/<head(?:\s[^>]*)?>/i.test(html)) {
+		return html.replace(/<head(?:\s[^>]*)?>/i, (tag) => `${tag}${DEMO_CSP_META}`);
+	}
+	if (/<html(?:\s[^>]*)?>/i.test(html)) {
+		return html.replace(/<html(?:\s[^>]*)?>/i, (tag) => `${tag}<head>${DEMO_CSP_META}</head>`);
+	}
+	if (/^\s*<!doctype[^>]*>/i.test(html)) {
+		return html.replace(/^\s*<!doctype[^>]*>/i, (tag) => `${tag}${DEMO_CSP_META}`);
+	}
+	return `${DEMO_CSP_META}${html}`;
+}
+
+const ISOLATED_PAGE_SCHEMES = new Set(["about:", "data:", "blob:"]);
 
 /** Request filter for isolated pages (pure; exported for tests). */
 export function isIsolatedPageRequestAllowed(url: string): boolean {
@@ -317,18 +365,31 @@ type IsolatedPage = Pick<
 
 class IsolatedPageCleanupError extends Error {}
 
-/** Load untrusted markup in memory with the request filter on. Cleanup first
- * retires the document under that same guard, then disables interception.
- * If retirement fails, leave the guard installed and discard the helper. */
+/** Load untrusted markup in memory with the offline request filter and CSP on.
+ *  Cleanup retires to about:blank while allowing only our own navigation, then
+ *  disables interception. If retirement fails, leave the guard installed. */
 export async function loadIsolatedPage(page: IsolatedPage, html: string): Promise<() => Promise<void>> {
+	let allowBlankNavigation = false;
+	const gotoBlank = async () => {
+		allowBlankNavigation = true;
+		try {
+			await page.goto("about:blank", { timeout: 5_000 });
+		} finally {
+			allowBlankNavigation = false;
+		}
+	};
 	const onRequest = (request: import("puppeteer-core").HTTPRequest) => {
-		const decision = isIsolatedPageRequestAllowed(request.url()) ? request.continue() : request.abort("accessdenied");
+		const isNav = typeof (request as { isNavigationRequest?: unknown }).isNavigationRequest === "function"
+			? request.isNavigationRequest()
+			: false;
+		const allowed = isIsolatedPageRequestAllowed(request.url()) && (!isNav || allowBlankNavigation);
+		const decision = allowed ? request.continue() : request.abort("accessdenied");
 		void decision.catch(() => {});
 	};
 	let retirement: Promise<void> | undefined;
 	const cleanup = () => retirement ??= (async () => {
 		try {
-			await page.goto("about:blank", { timeout: 5_000 });
+			await gotoBlank();
 			await page.setRequestInterception(false);
 			page.off("request", onRequest);
 		} catch (error) {
@@ -339,8 +400,8 @@ export async function loadIsolatedPage(page: IsolatedPage, html: string): Promis
 		page.on("request", onRequest);
 		await page.setRequestInterception(true);
 		// setContent retains the current origin; reset under the guard first.
-		if (page.url() !== "about:blank") await page.goto("about:blank", { timeout: 5_000 });
-		await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
+		if (page.url() !== "about:blank") await gotoBlank();
+		await page.setContent(injectDemoCsp(html), { waitUntil: "load", timeout: 30_000 });
 		return cleanup;
 	} catch (err) {
 		await cleanup();
@@ -408,13 +469,26 @@ export async function runDemoOnPage(page: import("puppeteer-core").Page, html: s
 
 // ─── SVG rasterization ───────────────────────────────────────────────────────
 
+export const MAX_SVG_SIDE = 8192;
+export const MAX_SVG_PIXELS = 16_000_000;
+
 function svgViewport(svg: string, opts: RenderSvgOptions): { width: number; height: number } {
-	if (opts.width && opts.height) return { width: opts.width, height: opts.height };
+	if (opts.width && opts.height) {
+		if (
+			!Number.isFinite(opts.width) || !Number.isFinite(opts.height) ||
+			opts.width <= 0 || opts.height <= 0 ||
+			opts.width > MAX_SVG_SIDE || opts.height > MAX_SVG_SIDE ||
+			opts.width * opts.height > MAX_SVG_PIXELS
+		) {
+			throw new Error(`SVG dimensions must not exceed ${MAX_SVG_SIDE}px per side or ${MAX_SVG_PIXELS} pixels`);
+		}
+		return { width: opts.width, height: opts.height };
+	}
 	const width = Number(svg.match(/\bwidth\s*=\s*"?(\d+(?:\.\d+)?)/)?.[1]);
 	const height = Number(svg.match(/\bheight\s*=\s*"?(\d+(?:\.\d+)?)/)?.[1]);
 	return {
-		width: Math.ceil(Number.isFinite(width) && width > 0 ? width : 900),
-		height: Math.ceil(Number.isFinite(height) && height > 0 ? height : 700),
+		width: Math.min(Math.ceil(Number.isFinite(width) && width > 0 ? width : 900), MAX_SVG_SIDE),
+		height: Math.min(Math.ceil(Number.isFinite(height) && height > 0 ? height : 700), MAX_SVG_SIDE),
 	};
 }
 
@@ -498,6 +572,14 @@ async function renderSvg(svg: string, opts: RenderSvgOptions = {}): Promise<Buff
 		font: { loadSystemFonts: true },
 		background: "#ffffff",
 	});
+	if (
+		!Number.isFinite(resvg.width) || !Number.isFinite(resvg.height) ||
+		resvg.width <= 0 || resvg.height <= 0 ||
+		resvg.width > MAX_SVG_SIDE || resvg.height > MAX_SVG_SIDE ||
+		resvg.width * resvg.height > MAX_SVG_PIXELS
+	) {
+		throw new Error(`Rendered SVG exceeds safety limits (${Math.round(resvg.width)}x${Math.round(resvg.height)})`);
+	}
 	return providerSafePng(resvg.render().asPng());
 }
 

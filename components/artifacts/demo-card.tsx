@@ -28,6 +28,10 @@ import type { ArtifactPartProps, DemoResult } from "@/src/core";
 
 // ─── bridge injection + message handling (pure, testable) ───────────────────
 
+export const DEMO_CSP_META = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; form-action \'none\'; base-uri \'none\';">';
+
+const MAX_DEMO_ERROR_LENGTH = 400;
+
 export const DEMO_BRIDGE_SCRIPT = `<script>(function(){
 var send=function(m){try{parent.postMessage(m,"*")}catch(e){}};
 var post=function(){
@@ -46,10 +50,18 @@ setTimeout(post,50);
 setTimeout(post,400);
 })();</script>`;
 
-/** Inject the bridge before </body> (or at the end of a body-less document). */
+function injectDemoCspMeta(html: string): string {
+	if (/<head(?:\s[^>]*)?>/i.test(html)) return html.replace(/<head(?:\s[^>]*)?>/i, (tag) => `${tag}${DEMO_CSP_META}`);
+	if (/<html(?:\s[^>]*)?>/i.test(html)) return html.replace(/<html(?:\s[^>]*)?>/i, (tag) => `${tag}<head>${DEMO_CSP_META}</head>`);
+	if (/^\s*<!doctype[^>]*>/i.test(html)) return html.replace(/^\s*<!doctype[^>]*>/i, (tag) => `${tag}${DEMO_CSP_META}`);
+	return `${DEMO_CSP_META}${html}`;
+}
+
+/** Inject strict offline CSP + the bridge before </body> (or at the end of a body-less document). */
 export function buildDemoSrcDoc(html: string): string {
-	if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${DEMO_BRIDGE_SCRIPT}</body>`);
-	return `${html}${DEMO_BRIDGE_SCRIPT}`;
+	const guarded = injectDemoCspMeta(html);
+	if (/<\/body>/i.test(guarded)) return guarded.replace(/<\/body>/i, `${DEMO_BRIDGE_SCRIPT}</body>`);
+	return `${guarded}${DEMO_BRIDGE_SCRIPT}`;
 }
 
 export interface DemoBridgeState {
@@ -72,7 +84,10 @@ export function reduceDemoBridgeState(state: DemoBridgeState, data: unknown): De
 		return height === state.height ? state : { ...state, height };
 	}
 	if (message.type === "demo-error") {
-		const text = typeof message.message === "string" && message.message.trim() ? message.message : "unknown error";
+		const raw = typeof message.message === "string" ? message.message.replace(/\s+/g, " ").trim() : "";
+		const text = raw
+			? (raw.length > MAX_DEMO_ERROR_LENGTH ? `${raw.slice(0, MAX_DEMO_ERROR_LENGTH)}…` : raw)
+			: "unknown error";
 		return text === state.error ? state : { ...state, error: text };
 	}
 	return state;
@@ -251,7 +266,7 @@ export function DemoErrorChip({
 			data-testid="demo-error-chip"
 		>
 			<span className="font-medium">This demo threw an error</span>
-			<span className="min-w-0 flex-1 truncate font-mono text-xs" title={message}>
+			<span className="min-w-0 flex-1 break-words font-mono text-xs">
 				{message}
 			</span>
 			{onSend && (

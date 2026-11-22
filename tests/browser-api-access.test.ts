@@ -123,6 +123,8 @@ describe("package scripts", () => {
 		const { scripts } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { scripts: { dev: string; start: string; "desktop:dev": string } };
 		assert.match(scripts.dev, /^npm run plugins:build-core && npm run plugins:build-authoring && next dev -H localhost\b/);
 		assert.match(scripts.start, /^next start -H localhost\b/);
-		assert.match(scripts["desktop:dev"], /"npm run dev"/);
+		assert.equal(scripts["desktop:dev"], "node scripts/desktop-dev.mjs");
+		const launcher = readFileSync(new URL("../scripts/desktop-dev.mjs", import.meta.url), "utf8");
+		assert.match(launcher, /"run",\s*"dev"/);
 	});
 });

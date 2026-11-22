@@ -37,20 +37,21 @@ after(async () => {
 const blocked = /File-access configuration.*blocked/;
 
 describe("strict persisted file-access policy", () => {
-	it("genuinely absent preferences default OFF, including a not-yet-created data folder", async () => {
-		assert.deepEqual(readFileAccessSettings(), { ok: true, settings: { restricted: false, folders: [] } });
+	it("genuinely absent preferences fail closed (restricted ON), including a not-yet-created data folder", async () => {
+		assert.deepEqual(readFileAccessSettings(), { ok: true, settings: { restricted: true, folders: [] } });
 		assert.equal(fileAccessConfigurationError(), null);
-		assert.equal(resolveSourcePath(path.join(b, "notes.md")), path.join(b, "notes.md"));
+		assert.throws(() => resolveSourcePath(path.join(b, "notes.md")), /allowed folders/);
 		await fs.rmdir(data);
 		try { assert.equal(readFileAccessSettings().ok, true); }
 		finally { await fs.mkdir(data); }
 	});
-	it("valid existing preferences with no policy default OFF; a legacy list alone does not turn it ON", async () => {
+	it("valid existing preferences with no restricted boolean default ON; explicit false turns restriction OFF", async () => {
 		await stored({ version: 1, agent: { tools: { pdf: false } } });
-		assert.equal(fileAccessPolicy().restricted, false);
+		assert.equal(fileAccessPolicy().restricted, true);
 		await stored({ version: 1, agent: { fileAccess: { folders: [a] } } });
-		assert.equal(fileAccessPolicy().restricted, false);
-		assert.equal(resolveSourcePath(path.join(b, "notes.md")), path.join(b, "notes.md"));
+		assert.equal(fileAccessPolicy().restricted, true);
+		assert.throws(() => resolveSourcePath(path.join(b, "notes.md")), /allowed folders/);
+		assert.equal(resolveSourcePath("Study/notes.md"), path.join(a, "notes.md"));
 	});
 	it("reads the latest policy for the next operation, not a cached sanitized default", async () => {
 		await stored({ version: 1, agent: { fileAccess: { restricted: true, folders: ["~/Study"] } } });

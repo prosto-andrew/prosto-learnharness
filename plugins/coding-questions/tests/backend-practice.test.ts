@@ -22,7 +22,7 @@ test("practice processor observes repeated submissions, keeps thinking/solution 
   t.after(() => { if (!disposed) cleanup(); });
   const payload: CodingPayload = {
     language: "JavaScript", starterCode: "function square(x) {}",
-    tests: { program: process.execPath, args: ["-"], code: `const fs=require('node:fs'),vm=require('node:vm'),scope={};
+    tests: { program: "node", args: ["-"], code: `const fs=require('node:fs'),vm=require('node:vm'),scope={};
 const code=fs.readFileSync('answer.txt','utf8');
 if(code.includes('PRIVATE_THINKING')||code.includes('PRIVATE_SOLUTION'))throw Error('Mixed input channels');
 vm.runInNewContext(code,scope);

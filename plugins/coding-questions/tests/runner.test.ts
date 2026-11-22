@@ -18,7 +18,7 @@ async function fixture(t: TestContext) {
 }
 
 function nodeTests(source: string, args: string[] = [], code = ""): CodingTests {
-  return { program: process.execPath, args: ["-e", source, ...args], code };
+  return { program: "node", args: ["-e", source, ...args], code };
 }
 
 async function assertEmptyWorkspace(dataDirectory: string, questionId: string) {
@@ -133,16 +133,30 @@ process.stdin.on('end', () => console.log(JSON.stringify({cwd: process.cwd(), fi
   await assertEmptyWorkspace(f.dataDirectory, f.questionId);
 });
 
-test("passes argv literally with no shell expansion and inherits environment", async (t) => {
+test("passes argv literally with no shell expansion and runs in an isolated workspace env", async (t) => {
   const f = await fixture(t);
+  const prevSecret = process.env.LH_DESKTOP_API_SECRET;
+  const prevOpenAi = process.env.OPENAI_API_KEY;
+  process.env.LH_DESKTOP_API_SECRET = "host-secret-must-not-leak";
+  process.env.OPENAI_API_KEY = "sk-must-not-leak";
+  t.after(() => {
+    if (prevSecret === undefined) delete process.env.LH_DESKTOP_API_SECRET; else process.env.LH_DESKTOP_API_SECRET = prevSecret;
+    if (prevOpenAi === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = prevOpenAi;
+  });
   const args = ["hello world", "*", "$HOME", "$(echo injected)", "; echo injected", "\"quotes\"", ""];
-  const source = `console.log(JSON.stringify({args: process.argv.slice(1), path: process.env.PATH, home: process.env.HOME}))`;
+  const source = `console.log(JSON.stringify({cwd: process.cwd(), args: process.argv.slice(1), path: process.env.PATH ?? process.env.Path, home: process.env.HOME, userprofile: process.env.USERPROFILE, tmp: process.env.TMP, temp: process.env.TEMP, tmpdir: process.env.TMPDIR, secret: process.env.LH_DESKTOP_API_SECRET ?? null, openai: process.env.OPENAI_API_KEY ?? null}))`;
   const result = await runTests({ ...f, tests: nodeTests(source, args) });
   assert.equal(result.status, "passed");
   const actual = JSON.parse(result.stdout);
   assert.deepEqual(actual.args, args);
-  assert.equal(actual.path, process.env.PATH);
-  assert.equal(actual.home, process.env.HOME);
+  assert.equal(actual.path, process.env.PATH ?? process.env.Path);
+  assert.equal(actual.home, actual.cwd);
+  assert.equal(actual.userprofile, actual.cwd);
+  assert.equal(actual.tmp, actual.cwd);
+  assert.equal(actual.temp, actual.cwd);
+  assert.equal(actual.tmpdir, actual.cwd);
+  assert.equal(actual.secret, null);
+  assert.equal(actual.openai, null);
 });
 
 test("uses normal PATH lookup instead of requiring an absolute program", async (t) => {
@@ -163,8 +177,8 @@ test("reports missing executables and synchronous invalid spawn arguments as err
   for (const tests of [
     { program: "this-executable-does-not-exist-coding-runner-test", args: [], code: "" },
     { program: "", args: [], code: "" },
-    { program: process.execPath, args: 42 as unknown as string[], code: "" },
-    { program: process.execPath, args: ["bad\0argument"], code: "" },
+    { program: "node", args: 42 as unknown as string[], code: "" },
+    { program: "node", args: ["bad\0argument"], code: "" },
   ]) {
     const result = await runTests({ ...f, tests });
     assert.equal(result.status, "error");
@@ -172,6 +186,30 @@ test("reports missing executables and synchronous invalid spawn arguments as err
     assert.match(result.message!, /launch/i);
     await assertEmptyWorkspace(f.dataDirectory, f.questionId);
   }
+});
+
+test("rejects shells, explicit paths, and unallowlisted programs before spawn", async (t) => {
+  const f = await fixture(t);
+  for (const program of ["sh", "bash", "zsh", "cmd", "powershell", "pwsh", process.execPath, "/usr/bin/python3", "./node", "curl", "wget"]) {
+    const result = await runTests({ ...f, tests: { program, args: ["-"], code: "" } });
+    assert.equal(result.status, "error", program);
+    assert.equal(result.exitCode, null);
+    assert.match(result.message!, /blocked|allowlist|plain executable/i, program);
+    await assertEmptyWorkspace(f.dataDirectory, f.questionId);
+  }
+  const prevExtra = process.env.LH_CODING_ALLOWED_PROGRAMS;
+  process.env.LH_CODING_ALLOWED_PROGRAMS = "bash,./evil,my-missing-compiler";
+  t.after(() => {
+    if (prevExtra === undefined) delete process.env.LH_CODING_ALLOWED_PROGRAMS; else process.env.LH_CODING_ALLOWED_PROGRAMS = prevExtra;
+  });
+  for (const blocked of ["bash", "./evil"]) {
+    const result = await runTests({ ...f, tests: { program: blocked, args: [], code: "" } });
+    assert.equal(result.status, "error", blocked);
+    assert.match(result.message!, /blocked|plain executable/i, blocked);
+  }
+  const extraAllowed = await runTests({ ...f, tests: { program: "my-missing-compiler", args: [], code: "" } });
+  assert.equal(extraAllowed.status, "error");
+  assert.doesNotMatch(extraAllowed.message!, /not in the allowlist/);
 });
 
 test("an early closed stdin/EPIPE does not crash or replace a valid nonzero exit", async (t) => {
@@ -214,9 +252,9 @@ test("UTF-8 output caps drop only incomplete truncated suffixes and preserve com
   for (const character of ["λ", "€", "😀"]) {
     const width = Buffer.byteLength(character);
     for (let retained = 1; retained < width; retained++) {
-      const prefix = "a".repeat(65536 - retained);
-      const output = prefix + character + "tail";
-      const result = await runTests({ ...f, tests: nodeTests(`const output = ${JSON.stringify(output)}; process.stdout.write(output); process.stderr.write(output);`) });
+      const prefixLen = 65536 - retained;
+      const prefix = "a".repeat(prefixLen);
+      const result = await runTests({ ...f, tests: nodeTests(`const output = "a".repeat(${prefixLen}) + ${JSON.stringify(character + "tail")}; process.stdout.write(output); process.stderr.write(output);`) });
       assert.equal(result.status, "passed");
       for (const stream of [result.stdout, result.stderr]) {
         assert.equal(stream, prefix);
@@ -226,9 +264,10 @@ test("UTF-8 output caps drop only incomplete truncated suffixes and preserve com
       assert.equal(result.stdoutTruncated, true);
       assert.equal(result.stderrTruncated, true);
     }
-    const complete = "a".repeat(65536 - width) + character;
+    const completeLen = 65536 - width;
+    const complete = "a".repeat(completeLen) + character;
     for (const suffix of ["", "extra"]) {
-      const result = await runTests({ ...f, tests: nodeTests(`const output = ${JSON.stringify(complete + suffix)}; process.stdout.write(output); process.stderr.write(output);`) });
+      const result = await runTests({ ...f, tests: nodeTests(`const output = "a".repeat(${completeLen}) + ${JSON.stringify(character + suffix)}; process.stdout.write(output); process.stderr.write(output);`) });
       assert.equal(result.stdout, complete);
       assert.equal(result.stderr, complete);
       assert.equal(Buffer.byteLength(result.stdout), 65536);

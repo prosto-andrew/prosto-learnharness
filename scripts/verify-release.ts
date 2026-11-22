@@ -292,9 +292,8 @@ export function verifyConfigAssumptions(config: unknown, pkg: unknown): { ok: tr
 			bad(`linux.target changed (${JSON.stringify(config.linux.target)}) — expected names no longer hold`);
 		}
 	}
-	const publish = Array.isArray(config.publish) ? config.publish[0] : undefined;
-	if (!isPlainObject(publish) || publish.provider !== "github" || publish.releaseType !== "draft") {
-		bad(`publish[0] must be the github provider with releaseType "draft" (${JSON.stringify(config.publish)}) — uploads would not land in the draft`);
+	if (config.publish !== undefined) {
+		bad(`publish section must be absent in hardened builds (${JSON.stringify(config.publish)})`);
 	}
 	if (errors.length > 0) {
 		errors.push("packaging config drifted from the verified shapes — re-derive the expected assets in scripts/verify-release.ts");

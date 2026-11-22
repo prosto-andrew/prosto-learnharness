@@ -122,6 +122,38 @@ const nextConfig: NextConfig = {
 		"@silvia-odwyer/photon-node", // CJS loads its adjacent WASM from disk
 		"@resvg/resvg-js", // native binding — same
 	],
+	async headers() {
+		const isDev = process.env.NODE_ENV === "development";
+		const scriptSrc = isDev
+			? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval'"
+			: "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'";
+		const csp = [
+			"default-src 'self'",
+			scriptSrc,
+			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' data: blob:",
+			"font-src 'self' data:",
+			"connect-src 'self' wss://api.deepgram.com",
+			"media-src 'self' blob:",
+			"worker-src 'self' blob:",
+			"frame-src 'self' data: blob:",
+			"frame-ancestors 'none'",
+			"object-src 'none'",
+			"base-uri 'self'",
+			"form-action 'self'",
+		].join("; ");
+		return [
+			{
+				source: "/:path*",
+				headers: [
+					{ key: "X-Frame-Options", value: "DENY" },
+					{ key: "X-Content-Type-Options", value: "nosniff" },
+					{ key: "Referrer-Policy", value: "no-referrer" },
+					{ key: "Content-Security-Policy", value: csp },
+				],
+			},
+		];
+	},
 };
 
 export default nextConfig;

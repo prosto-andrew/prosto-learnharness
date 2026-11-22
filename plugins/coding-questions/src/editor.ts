@@ -5,7 +5,9 @@ import { bracketMatching, indentUnit, LanguageDescription, syntaxHighlighting } 
 import { languages } from "@codemirror/language-data";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import type { PluginQuestionAnswerState, PluginQuestionEditorHandle, PluginQuestionEditorProps, PluginProblemEditorHandle, PluginProblemEditorProps } from "learnharness-plugin-api";
+import { isSafeBareExecutable, validateTestProgram } from "./allowlist.ts";
 import { isReady, normalizeLineEndings, type CodingPayload, type CodingQuestionPayload } from "./contract.ts";
+import type { CodingTests } from "./test-result.ts";
 import { supportsSyntaxDiagnostics, syntaxDiagnosticsExtension } from "./diagnostics.ts";
 
 export function findLanguage(name: string): LanguageDescription | null {
@@ -106,23 +108,132 @@ function createCodeView(container: HTMLElement, language: string, code: string, 
 }
 
 type CodeEditorProps = Pick<PluginQuestionEditorProps, "answer" | "active" | "signal" | "onChange"> & {
-  readonly input: { payload: Pick<CodingPayload, "language" | "starterCode"> };
+  readonly input: { payload: Pick<CodingPayload, "language" | "starterCode"> & { tests?: Partial<CodingTests> } };
 };
+
+function formatTestCommand(program: string, args: readonly string[]): string {
+  return [program, ...args]
+    .map((part) => (part === "" || /[\s"'$`\\;|&<>()]/.test(part) ? JSON.stringify(part) : part))
+    .join(" ");
+}
+
+function createTestReviewPanel(
+  container: HTMLElement,
+  tests: Partial<CodingTests> | undefined,
+  active: boolean,
+  onApprovalChange: (approved: boolean) => void,
+) {
+  const doc = container.ownerDocument;
+  const panel = doc.createElement("div");
+  panel.className = "lh-coding-test-review";
+  panel.setAttribute("data-testid", "coding-test-review");
+
+  const heading = doc.createElement("div");
+  heading.className = "lh-coding-test-review__title";
+  heading.textContent = "Test runner inspection (runs locally after submission)";
+  panel.append(heading);
+
+  const hasRecipe =
+    !!tests &&
+    typeof tests.program === "string" &&
+    /\S/.test(tests.program) &&
+    Array.isArray(tests.args) &&
+    tests.args.every((arg) => typeof arg === "string") &&
+    typeof tests.code === "string" &&
+    /\S/.test(tests.code);
+
+  const safeProgram = hasRecipe && isSafeBareExecutable(tests.program!);
+  let approved = false;
+
+  if (!hasRecipe) {
+    const warn = doc.createElement("p");
+    warn.className = "lh-coding-test-review__warning";
+    warn.textContent = "Test recipe is missing or malformed — local execution is disabled.";
+    panel.append(warn);
+    container.append(panel);
+    return {
+      isAllowed: () => false,
+      setActive() {},
+      dispose() { panel.remove(); },
+    };
+  }
+
+  const commandLine = doc.createElement("code");
+  commandLine.className = "lh-coding-test-review__command";
+  commandLine.setAttribute("data-testid", "coding-test-command");
+  commandLine.textContent = formatTestCommand(tests.program!, tests.args!);
+  panel.append(commandLine);
+
+  if (!safeProgram) {
+    const warn = doc.createElement("p");
+    warn.className = "lh-coding-test-review__warning";
+    warn.setAttribute("data-testid", "coding-test-blocked");
+    warn.textContent = `Blocked executable "${tests.program}": shells and paths are not permitted.`;
+    panel.append(warn);
+  } else if (!validateTestProgram(tests.program!).ok) {
+    const note = doc.createElement("p");
+    note.className = "lh-coding-test-review__note";
+    note.textContent = "Non-default runtime: execution succeeds only if explicitly permitted via LH_CODING_ALLOWED_PROGRAMS.";
+    panel.append(note);
+  }
+
+  const codePreview = doc.createElement("pre");
+  codePreview.className = "lh-coding-test-review__code";
+  codePreview.setAttribute("data-testid", "coding-test-code");
+  codePreview.textContent = normalizeLineEndings(tests.code!);
+  panel.append(codePreview);
+
+  const consent = doc.createElement("label");
+  consent.className = "lh-coding-test-review__consent";
+  const checkbox = doc.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = false;
+  checkbox.disabled = !active || !safeProgram;
+  checkbox.setAttribute("data-testid", "coding-test-approve");
+  checkbox.addEventListener("change", () => {
+    approved = checkbox.checked;
+    onApprovalChange(approved);
+  });
+  const consentText = doc.createElement("span");
+  consentText.textContent = "I reviewed this command and test code and allow running it locally";
+  consent.append(checkbox, consentText);
+  panel.append(consent);
+
+  container.append(panel);
+  return {
+    isAllowed: () => safeProgram && approved,
+    setActive(nextActive: boolean) {
+      checkbox.disabled = !nextActive || !safeProgram;
+    },
+    dispose() {
+      panel.remove();
+    },
+  };
+}
 
 function mountCodeEditor(container: HTMLElement, props: CodeEditorProps): PluginQuestionEditorHandle {
   let disposed = false;
   let active = props.active;
   const initialCode = props.answer.status === "empty" ? normalizeLineEndings(props.input.payload.starterCode ?? "") : codeFromAnswer(props.answer);
+  let latestCode = initialCode;
+  let review!: ReturnType<typeof createTestReviewPanel>;
   const publish = (code: string) => {
-    if (!disposed && !props.signal.aborted) props.onChange({ status: isReady(code) ? "ready" : "unready", value: code });
+    latestCode = code;
+    if (!disposed && !props.signal.aborted) {
+      props.onChange({ status: isReady(code) && review.isAllowed() ? "ready" : "unready", value: code });
+    }
   };
   const editor = createCodeView(container, props.input.payload.language, initialCode, active, code => {
     if (active) publish(code);
+  });
+  review = createTestReviewPanel(container, props.input.payload.tests, active, () => {
+    publish(latestCode);
   });
   const dispose = () => {
     if (disposed) return;
     disposed = true;
     props.signal.removeEventListener("abort", dispose);
+    review.dispose();
     editor.dispose();
   };
   if (props.signal.aborted) dispose();
@@ -134,7 +245,10 @@ function mountCodeEditor(container: HTMLElement, props: CodeEditorProps): Plugin
     update(next) {
       if (disposed) return;
       active = next.active;
-      editor.update(codeFromAnswer(next.answer), active);
+      const nextCode = codeFromAnswer(next.answer);
+      latestCode = nextCode;
+      review.setActive(active);
+      editor.update(nextCode, active);
     },
     focus() { if (!disposed && active) editor.view.focus(); },
     handleKeyDown(key) {

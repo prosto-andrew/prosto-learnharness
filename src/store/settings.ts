@@ -36,10 +36,10 @@ const FILE_ACCESS_ERROR = "File-access configuration cannot be read reliably. Le
 function fileAccessFromRecord(raw: unknown): FileAccessSettingsResult {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: FILE_ACCESS_ERROR };
 	const agent = (raw as Record<string, unknown>).agent;
-	if (agent === undefined) return { ok: true, settings: { restricted: false, folders: [] } };
+	if (agent === undefined) return { ok: true, settings: { restricted: true, folders: [] } };
 	if (!agent || typeof agent !== "object" || Array.isArray(agent)) return { ok: false, error: FILE_ACCESS_ERROR };
 	const value = (agent as Record<string, unknown>).fileAccess;
-	if (value === undefined) return { ok: true, settings: { restricted: false, folders: [] } };
+	if (value === undefined) return { ok: true, settings: { restricted: true, folders: [] } };
 	const parsed = parseFileAccessSettings(value);
 	if (!parsed.ok || parsed.settings.folders.some((folder) => folder !== "~" && !folder.startsWith("~/") && !path.isAbsolute(folder))) {
 		return { ok: false, error: FILE_ACCESS_ERROR };
@@ -74,7 +74,7 @@ export function readFileAccessSettings(): FileAccessSettingsResult {
 	try { raw = fs.readFileSync(SETTINGS_FILE, "utf-8"); }
 	catch (error) {
 		return (error as NodeJS.ErrnoException).code === "ENOENT" && settingsAreAbsent()
-			? { ok: true, settings: { restricted: false, folders: [] } }
+			? { ok: true, settings: { restricted: true, folders: [] } }
 			: { ok: false, error: FILE_ACCESS_ERROR };
 	}
 	try { return fileAccessFromRecord(JSON.parse(raw)); }

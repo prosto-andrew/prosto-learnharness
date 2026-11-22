@@ -35,6 +35,8 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { PATHS } from "../config.ts";
 import { checkLearnerImage, loadLearnerImage } from "../src/agent/tools/learner-image.ts";
+import { setFileAccessPolicy } from "../src/agent/tools/file-access.ts";
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 import { createShowImageTool } from "../src/agent/tools/show-image.ts";
 import { embedLearnerImage } from "../src/core/learner-image-svg.ts";
 import type { ImageSnapshot } from "../src/core/contracts.ts";

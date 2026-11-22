@@ -341,15 +341,16 @@ test("unbundled Node worker responds with tagged output and matches the in-proce
 	} finally { await worker.terminate(); }
 });
 
-test("missing cwd-relative worker falls back in-process without altering the caller bytes", async () => {
+test("missing cwd-relative worker fails closed without altering the caller bytes", async () => {
 	const cwd = process.cwd();
 	const dir = await mkdtemp(path.join(os.tmpdir(), "lh-image-worker-fallback-"));
 	const bytes = png();
+	const snapshot = Buffer.from(bytes);
 	const options = { maxWidth: 64, maxHeight: 64 };
-	const expected = await resizeImageInProcess(bytes, "image/png", options);
 	try {
 		process.chdir(dir);
-		assert.deepEqual(await resizeImage(bytes, "image/png", options), expected);
+		await assert.rejects(resizeImage(bytes, "image/png", options), /Cannot find module|ENOENT/);
+		assert.deepEqual(bytes, snapshot);
 	} finally {
 		process.chdir(cwd);
 		await rm(dir, { recursive: true, force: true });

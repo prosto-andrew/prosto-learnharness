@@ -128,14 +128,14 @@ export function composeFileRestriction(agent: AgentSettings | undefined, restric
 export function composeAddFolder(agent: AgentSettings | undefined, folder: string): AgentSettings {
 	const next = folder.trim();
 	const folders = agent?.fileAccess?.folders ?? [];
-	const restricted = agent?.fileAccess?.restricted ?? false;
+	const restricted = agent?.fileAccess?.restricted ?? true;
 	if (!isFolderEntry(next) || folders.includes(next)) return { ...agent, fileAccess: { restricted, folders } };
 	return { ...agent, fileAccess: { restricted, folders: [...folders, next] } };
 }
 
 /** Removing the last folder NEVER changes the restriction switch. */
 export function composeRemoveFolder(agent: AgentSettings | undefined, folder: string): AgentSettings {
-	return { ...agent, fileAccess: { restricted: agent?.fileAccess?.restricted ?? false, folders: (agent?.fileAccess?.folders ?? []).filter((f) => f !== folder) } };
+	return { ...agent, fileAccess: { restricted: agent?.fileAccess?.restricted ?? true, folders: (agent?.fileAccess?.folders ?? []).filter((f) => f !== folder) } };
 }
 
 /** Parse the numeric draft and compose the WHOLE agent section. Empty
@@ -908,7 +908,7 @@ export function AgentSection({
 				))}
 				{(() => {
 					const folders = agent?.fileAccess?.folders ?? [];
-					const restricted = Boolean(fileAccessError) || agent?.fileAccess?.restricted === true;
+					const restricted = Boolean(fileAccessError) || agent?.fileAccess?.restricted !== false;
 					const effectiveAgent = fileAccessError ? { ...agent, fileAccess: { restricted: true, folders } } : agent;
 					const addFolder = () => {
 						const next = folderInput.trim();

@@ -78,12 +78,16 @@ it("detects leading PDF magic even when renamed and case-insensitive .PDF even w
 		calls.push({ bytes, maxPages, options }); return converted();
 	} });
 	for (const [name, content] of [["renamed.txt", "%PDF-not-actually-validated-by-stub"], ["UPPER.PDF", "no magic"], ["mixed.PdF", "text"]]) {
-		const abortSignal = signal();
-		const result = await service.convert(upload(content, name), abortSignal);
+		const controller = new AbortController();
+		const result = await service.convert(upload(content, name), controller.signal);
 		assert.equal(result.name, name);
 		assert.equal(result.markdown, "--- Page 1 ---\n\nPDF text");
 		assert.equal(calls.at(-1)!.maxPages, MAX_DOCUMENT_PDF_PAGES);
-		assert.equal(calls.at(-1)!.options?.signal, abortSignal);
+		const forwarded = calls.at(-1)!.options?.signal;
+		assert.ok(forwarded instanceof AbortSignal);
+		assert.equal(forwarded.aborted, false);
+		controller.abort();
+		assert.equal(forwarded.aborted, true);
 		assert.equal(new TextDecoder().decode(calls.at(-1)!.bytes), content);
 	}
 	assert.equal(calls.length, 3);

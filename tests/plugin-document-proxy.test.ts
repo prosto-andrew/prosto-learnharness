@@ -30,7 +30,7 @@ it("Proxy excludes only the exact document endpoint, optional trailing slash and
 	]) assert.equal(proxyMatches(path), false, path);
 });
 
-it("Proxy retains API roots, siblings, endpoint lookalikes and all other API routes", () => {
+it("Proxy retains API roots, siblings, endpoint lookalikes, all other API routes, and SSR page routes", () => {
 	for (const path of [
 		"/api", "/api/", "/api?request=1", "/api/?request=1",
 		"/api/plugins", "/api/plugins/document-one", "/api/plugins/document-one/call",
@@ -38,8 +38,9 @@ it("Proxy retains API roots, siblings, endpoint lookalikes and all other API rou
 		`${documentPath}/extra`, `${documentPath}ish`, `${documentPath}.json`, `${documentPath}.rsc`,
 		"/api/plugins/document-one/other/documents/markdown", "/api/plugins/documents/markdown",
 		"/api/graph/import", "/api/events", "/api/chat", "/api/settings/models", "/api/chats/scratch/markdown",
+		"/", "/chat/new",
 	]) assert.equal(proxyMatches(path), true, path);
-	for (const path of ["/", "/chat/new", "/apix", "/api-other/plugins/document-one/documents/markdown"]) {
+	for (const path of ["/apix", "/api-other/plugins/document-one/documents/markdown"]) {
 		assert.equal(proxyMatches(path), false, path);
 	}
 });

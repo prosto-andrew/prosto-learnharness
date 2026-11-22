@@ -56,7 +56,7 @@ test("real coding registration poses once, processes revisions before continuati
     statement: "Implement **square**.", mode: "composition",
     modelSolution: "```js\nfunction square(x) { return x * x; }\n```\n\nCOMMITTED_SOLUTION",
     payload: { language: "JavaScript", starterCode: "function square(x) {}", tests: {
-      program: process.execPath, args: ["-"], code: "const fs=require('node:fs'),vm=require('node:vm'),scope={};vm.runInNewContext(fs.readFileSync('answer.txt','utf8'),scope);if(scope.square(3)!==9){console.error('Expected 9');process.exitCode=1;}else console.log('Observed test passed');",
+      program: "node", args: ["-"], code: "const fs=require('node:fs'),vm=require('node:vm'),scope={};vm.runInNewContext(fs.readFileSync('answer.txt','utf8'),scope);if(scope.square(3)!==9){console.error('Expected 9');process.exitCode=1;}else console.log('Observed test passed');",
     } },
   };
   const posed = await tool.execute("coding-pose", input);

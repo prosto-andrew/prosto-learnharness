@@ -856,7 +856,7 @@ export function Chat({
 			() => {
 				sentInitial.current = true;
 				const entry = readOpeningPromptEntry(chatId);
-				const prompt = initialPrompt || entry?.text; // Legacy links still work.
+				const prompt = entry?.text;
 				if (!initialPromptOwed(initialMessages, prompt)) {
 					if (initialMessages.some(m => m.role === "user" || m.role === "assistant")) clearOpeningPrompt(chatId);
 					return;

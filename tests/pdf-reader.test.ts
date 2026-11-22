@@ -12,6 +12,8 @@ import { after, before, describe, it } from "node:test";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
 import type { PiEngine } from "../src/agent/models.ts";
 import { runPdfReaderAgent } from "../src/agent/subagents/pdf-reader.ts";
+import { setFileAccessPolicy } from "../src/agent/tools/file-access.ts";
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 import type { HeadlessApi } from "../src/agent/subagents/headless.ts";
 
 const FIXTURE = path.join(import.meta.dirname, "fixtures", "sample-3page.pdf");

@@ -153,11 +153,23 @@ export function sanitizeSvg(source: string, label: string, language?: Language):
   return svg;
 }
 
-/** Apply the same 2 MiB output budget to use-expanded content, without expanding
- * it. Memoization plus a visiting set rejects cycles and acyclic reference bombs
- * in linear graph work; saturating arithmetic stops at the existing output cap.
+const URL_REF_ATTRIBUTES = [
+  "fill",
+  "stroke",
+  "color",
+  "stop-color",
+  "clip-path",
+  "mask",
+  "marker-start",
+  "marker-mid",
+  "marker-end",
+] as const;
+
+/** Apply the same 2 MiB output budget to reference-expanded content (both <use>
+ *  and url(#id) paint/clip/mask/marker references), without expanding it.
+ *  Memoization plus a visiting set rejects cycles and acyclic reference bombs.
  */
-function checkReferenceBudget(svg: SVGSVGElement): void {
+export function checkReferenceBudget(svg: SVGSVGElement): void {
   const targets = new Map<string, Element>();
   if (svg.id) targets.set(svg.id, svg);
   for (const element of svg.querySelectorAll("[id]")) if (!targets.has(element.id)) targets.set(element.id, element);
@@ -182,6 +194,13 @@ function checkReferenceBudget(svg: SVGSVGElement): void {
       if (element.localName === "use") {
         const href = element.getAttribute("href");
         const target = href?.startsWith("#") ? targets.get(href.slice(1)) : undefined;
+        if (target) add(size(target));
+      }
+      for (const attrName of URL_REF_ATTRIBUTES) {
+        const raw = element.getAttribute(attrName);
+        if (!raw) continue;
+        const ref = /^url\(\s*['"]?#([^\s'"()]+)['"]?\s*\)$/.exec(raw.trim());
+        const target = ref ? targets.get(ref[1]!) : undefined;
         if (target) add(size(target));
       }
     }

@@ -122,6 +122,8 @@ describe("tavilyProvider (wire shape per docs.tavily.com, verified 2026-09-20)",
 				results: [
 					{ title: "Example", url: "https://example.com/a", content: "line1\nline2" },
 					{ title: "No URL", content: "dropped" },
+					{ title: "XSS", url: "javascript:alert(1)", content: "dropped" },
+					{ title: "Local", url: "file:///etc/passwd", content: "dropped" },
 				],
 			},
 			(url, init) => {
@@ -140,11 +142,15 @@ describe("tavilyProvider (wire shape per docs.tavily.com, verified 2026-09-20)",
 		assert.deepEqual(hits, [{ title: "Example", url: "https://example.com/a", snippet: "line1 line2" }]);
 	});
 
-	it("maps the {detail:{error}} error body into the message", async () => {
+	it("surfaces only the HTTP status without echoing raw error body", async () => {
 		const provider = tavilyProvider("tvly-throwaway-key-00001", async () =>
 			new Response(JSON.stringify({ detail: { error: "Unauthorized: missing or invalid API key." } }), { status: 401 }),
 		);
-		await assert.rejects(provider.search("q", 5), /Tavily search API 401: Unauthorized/);
+		await assert.rejects(provider.search("q", 5), (error: unknown) => {
+			assert.match(String(error), /Tavily search API 401$/);
+			assert.doesNotMatch(String(error), /Unauthorized/);
+			return true;
+		});
 	});
 });
 
@@ -156,6 +162,7 @@ describe("braveProvider (wire shape per Brave's dashboard docs, verified 2026-09
 					results: [
 						{ title: "Example", url: "https://example.com/b", description: "a description" },
 						{ description: "dropped — no url" },
+						{ title: "Data", url: "data:text/html,<script>alert(1)</script>", description: "dropped" },
 					],
 				},
 			},

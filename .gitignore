@@ -29,3 +29,6 @@ xai-credentials.json*
 
 # dev-fresh launcher scratch (fresh-user sim): disposable per launch
 .fresh-data/
+
+# Local hardening progress tracker (never committed)
+TRACKER.md

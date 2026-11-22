@@ -11,6 +11,8 @@ import { findTool } from "../src/agent/tools/find.ts";
 import { grepTool } from "../src/agent/tools/grep.ts";
 import { lsTool } from "../src/agent/tools/ls.ts";
 import { readTool } from "../src/agent/tools/read.ts";
+import { setFileAccessPolicy } from "../src/agent/tools/file-access.ts";
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 
 /**
  * The learner-filesystem tools (sources v1, 2026-09-19): ls/find/grep as

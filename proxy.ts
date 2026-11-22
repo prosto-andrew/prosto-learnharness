@@ -1,23 +1,53 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { apiRequestRefusal } from "./src/server/desktop-access.ts";
+import { apiRequestRefusal, browserHostAllowed } from "./src/server/desktop-access.ts";
 
-/** Protects API methods, including SSE and spending/settings routes. The one
- * streamed document route enforces the identical all-method request policy
- * inside its handler, avoiding Next's silently truncated Proxy body clone.
- * No public callback or worker bypass: legitimate self-HTTP still needs the capability. */
+const PROTECTED_SSR_PREFIXES = ["/chat", "/settings", "/plugins"] as const;
+
+/** Protects API methods and guards SSR pages against DNS-rebinding Host headers
+ *  and cross-site requests. The streamed document route enforces apiRequestRefusal
+ *  inside its handler, avoiding Next's silently truncated Proxy body clone. */
 export function proxy(request: NextRequest) {
-	const refusal = apiRequestRefusal(request);
-	if (refusal) {
-		return NextResponse.json(
-			{ error: refusal },
-			{ status: 403, headers: { "Cache-Control": "no-store" } },
-		);
+	const { pathname } = request.nextUrl;
+	if (pathname === "/api" || pathname.startsWith("/api/")) {
+		const refusal = apiRequestRefusal(request);
+		if (refusal) {
+			return NextResponse.json(
+				{ error: refusal },
+				{ status: 403, headers: { "Cache-Control": "no-store" } },
+			);
+		}
+		return NextResponse.next();
+	}
+
+	const host = request.headers.get("host") ?? request.nextUrl.host;
+	if (!browserHostAllowed(host)) {
+		return new NextResponse("This host name is not allowed.", {
+			status: 403,
+			headers: { "Cache-Control": "no-store" },
+		});
+	}
+	if (
+		PROTECTED_SSR_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)) &&
+		request.headers.get("sec-fetch-site") === "cross-site"
+	) {
+		return new NextResponse("Cross-site page requests are not allowed.", {
+			status: 403,
+			headers: { "Cache-Control": "no-store" },
+		});
 	}
 	return NextResponse.next();
 }
 
 export const config = {
-	// Keep /api itself covered; exempt only the exact streamed endpoint, not
-	// the documents subtree or other plugin routes. Must remain static literals.
-	matcher: ["/api", "/api/((?!plugins/[^/]+/documents/markdown/?$).*)"],
+	// Protect SSR app routes as well as /api/* (keeping the streamed document
+	// upload endpoint exempted so Proxy does not truncate multipart uploads).
+	matcher: [
+		"/",
+		"/chat/:path*",
+		"/settings",
+		"/settings/:path*",
+		"/plugins/:path*",
+		"/api",
+		"/api/((?!plugins/[^/]+/documents/markdown/?$).*)",
+	],
 };

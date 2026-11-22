@@ -76,10 +76,10 @@ const boundary = /Access denied: .*allowed folders/;
 const mandatory = /Access denied: .*protected location/;
 
 describe("optional folder policy (finishing lickbot #157)", () => {
-	it("OFF retains broad reads even with a saved folder list, and no whole app-data ban", async () => {
+	it("OFF retains broad reads even with a saved folder list, while protecting app data dir", async () => {
 		policy = { restricted: false, folders: [a] };
 		assert.match(await text(readTool, { path: path.join(outside, "secret.txt") }), /OUTSIDE_ONLY/);
-		assert.match(await text(readTool, { path: path.join(data, "chats", "session.json") }), /ordinary learning/);
+		await assert.rejects(readTool.execute!("x", { path: path.join(data, "chats", "session.json") }), mandatory);
 		assert.match(await text(readTool, { path: path.join(root, "private", "logs", "main.log") }), /ordinary application/);
 		assert.equal(resolveSourcePath(), home);
 		assert.match(await text(lsTool, {}), /StudyA\//);
@@ -117,7 +117,7 @@ describe("optional folder policy (finishing lickbot #157)", () => {
 			await assert.rejects(grepTool.execute!("x", { path: file, pattern: "x" }), mandatory);
 		}
 		assert.equal(await text(grepTool, { pattern: "SYNTHETIC_CREDENTIAL_MARKER" }), "No matches found");
-		assert.match(await text(readTool, { path: path.join(data, "chats", "session.json") }), /ordinary learning/);
+		await assert.rejects(readTool.execute!("x", { path: path.join(data, "chats", "session.json") }), mandatory);
 	});
 	it("unknown/malformed provider data fails closed rather than becoming OFF", async () => {
 		setFileAccessPolicy(() => ({ restricted: true, folders: [], error: "File-access configuration cannot be read reliably" }));
@@ -279,11 +279,11 @@ describe("live policy and all learner-source surfaces", () => {
 });
 
 describe("settings parsing and UI", () => {
-	it("normalizes explicit mode/folders, preserves default OFF and rejects malformed policy", () => {
+	it("normalizes explicit mode/folders, preserves default ON and rejects malformed policy", () => {
 		const parsed = parseAgentSettingsBody({ fileAccess: { restricted: true, folders: [" ~/Study ", a, "~/Study"] } });
 		assert.ok(parsed.ok);
 		assert.deepEqual(parsed.settings.fileAccess, { restricted: true, folders: ["~/Study", a] });
-		assert.deepEqual(parseAgentSettingsBody({ fileAccess: { folders: [a] } }), { ok: true, settings: { fileAccess: { restricted: false, folders: [a] } } });
+		assert.deepEqual(parseAgentSettingsBody({ fileAccess: { folders: [a] } }), { ok: true, settings: { fileAccess: { restricted: true, folders: [a] } } });
 		for (const bad of [null, [], "on", { restricted: "yes" }, { folders: "~/Study" }, { folders: ["Study"] }, { folders: [3] }, { restricted: true, folders: [a, "bad"] }, { restrictd: true }]) {
 			assert.equal(parseAgentSettingsBody({ fileAccess: bad }).ok, false);
 			assert.deepEqual(sanitizeUserSettings({ version: 1, agent: { fileAccess: bad } })?.agent?.fileAccess, { restricted: true, folders: [] });
@@ -295,7 +295,7 @@ describe("settings parsing and UI", () => {
 	it("UI composition preserves the switch, saved roots and unrelated agent preferences", () => {
 		assert.ok(isFolderEntry("~/Study")); assert.ok(isFolderEntry("C:\\Users\\learner")); assert.ok(!isFolderEntry("relative"));
 		const one = composeAddFolder({ tools: { pdf: false }, graphTools: { enabled: false } }, " ~/Study ");
-		assert.deepEqual(one.fileAccess, { restricted: false, folders: ["~/Study"] });
+		assert.deepEqual(one.fileAccess, { restricted: true, folders: ["~/Study"] });
 		const on = composeFileRestriction(one, true);
 		assert.deepEqual(composeAddFolder(on, "~/Study"), on);
 		assert.deepEqual(composeAddFolder(on, "relative"), on);
@@ -307,9 +307,12 @@ describe("settings parsing and UI", () => {
 	});
 	it("SSR makes OFF, empty ON, editable folders and fail-closed errors explicit", () => {
 		const render = (agent?: Parameters<typeof AgentSection>[0]["agent"], fileAccessError?: string) => renderToStaticMarkup(React.createElement(AgentSection, { agent, fileAccessError, models: undefined, graph: undefined, compaction: undefined, onSectionChange: () => true, onModelsChange: () => {}, onCompactionChange: () => true }));
-		const off = render();
+		const off = render({ fileAccess: { restricted: false, folders: [] } });
 		assert.match(off, /Broad local source access/);
 		assert.match(off, /aria-checked="false"[^>]*aria-label="Restrict to listed folders"/);
+		const def = render();
+		assert.match(def, /Restricted: no folders allowed/);
+		assert.match(def, /aria-checked="true"[^>]*aria-label="Restrict to listed folders"/);
 		const empty = render({ fileAccess: { restricted: true, folders: [] } });
 		assert.match(empty, /Restricted: no folders allowed/);
 		assert.match(empty, /aria-checked="true"[^>]*aria-label="Restrict to listed folders"/);

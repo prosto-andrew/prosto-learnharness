@@ -1,6 +1,69 @@
 import { DOMParser } from "linkedom";
 import { embedLearnerImage, LEARNER_IMAGE_HREF } from "../../core/learner-image-svg.ts";
 
+const FORBIDDEN_STATIC_SVG_ELEMENTS = new Set([
+	"script",
+	"foreignobject",
+	"style",
+	"animate",
+	"animatemotion",
+	"animatetransform",
+	"set",
+	"discard",
+]);
+
+/** Shared structural guard for SVG attributes (no events, external resources, scripts, or CSS bombs). */
+function staticSvgAttributeProblem(element: Element, attr: Attr, label: string, allowLearnerImageHref = false): string | null {
+	if (attr.name === "xmlns" && attr.value !== "http://www.w3.org/2000/svg") {
+		return `${label} must use the SVG namespace`;
+	}
+	if (attr.name.startsWith("xmlns:") && (attr.name !== "xmlns:xlink" || attr.value !== "http://www.w3.org/1999/xlink")) {
+		return `${label} cannot declare namespace aliases`;
+	}
+	if (attr.name.includes(":") && !["xmlns:xlink", "xlink:href", "xml:lang", "xml:space"].includes(attr.name)) {
+		return `${label} cannot use qualified attribute aliases`;
+	}
+	if (attr.name === "xlink:href") {
+		let owner: Element | null = element;
+		while (owner && !owner.hasAttribute("xmlns:xlink")) owner = owner.parentElement;
+		if (owner?.getAttribute("xmlns:xlink") !== "http://www.w3.org/1999/xlink") {
+			return "xlink:href requires the standard XLink namespace declaration";
+		}
+	}
+	if (/^on/i.test(attr.name)) return `${label} cannot contain event handlers`;
+	if (attr.name === "xml:base" || /\\|@import|expression\s*\(|\bjavascript\s*:/i.test(attr.value)) {
+		return `${label} cannot contain dynamic scripts, resource bases, or escaped resource syntax`;
+	}
+	if (!allowLearnerImageHref && (attr.name === "href" || attr.name === "xlink:href") && !/^#[A-Za-z_][\w:.-]*$/.test(attr.value)) {
+		return `${label} cannot reference external files or URLs`;
+	}
+	if (/url\s*\(/i.test(attr.value) && !/^url\(\s*['"]?#[A-Za-z_][\w:.-]*['"]?\s*\)$/.test(attr.value)) {
+		return `${label} resources must be local fragment references`;
+	}
+	return null;
+}
+
+/** Structural validation for ordinary static visual-maker diagrams (disallows <image> and active SVG features). */
+export function staticSvgProblem(svg: string): string | null {
+	if (/<!DOCTYPE|<!ENTITY/i.test(svg)) return "figure SVGs cannot declare entities or a document type";
+	if (/<\?/.test(svg)) return "figure SVGs cannot contain processing instructions";
+	const doc = new DOMParser().parseFromString(svg, "image/svg+xml") as unknown as Document;
+	if (doc.documentElement?.localName !== "svg") return "expected a complete SVG document";
+	const elements = Array.from(doc.querySelectorAll("*"));
+	for (const element of elements) {
+		if (element.localName.includes(":")) return "figure SVG elements cannot use namespace prefixes";
+		const tag = element.localName.toLowerCase();
+		if (tag === "image" || FORBIDDEN_STATIC_SVG_ELEMENTS.has(tag)) {
+			return "figure SVGs must use static vector primitives only (no scripts, images, animations, styles, or foreignObject)";
+		}
+		for (const attr of Array.from(element.attributes)) {
+			const problem = staticSvgAttributeProblem(element, attr, "figure SVGs");
+			if (problem) return problem;
+		}
+	}
+	return null;
+}
+
 /** Structural annotation protocol, not a claim to prove visibility or mark accuracy.
  * Annotation rendering keeps strict native input, without ordinary figure repairs.
  */
@@ -21,20 +84,11 @@ export function annotationPlacementProblem(svg: string, width: number, height: n
 		// LinkeDOM preserves qualified names in localName. Keep the protocol's
 		// ordinary SVG spelling instead of trusting namespace identity resolution.
 		if (element.localName.includes(":")) return "annotation SVG elements cannot use namespace prefixes";
-		if (["script", "foreignobject", "style", "animate", "animatemotion", "animatetransform", "set", "discard"].includes(element.localName.toLowerCase())) return "annotation SVGs must use static SVG marks and inline styling";
+		if (FORBIDDEN_STATIC_SVG_ELEMENTS.has(element.localName.toLowerCase())) return "annotation SVGs must use static SVG marks and inline styling";
 		for (const attr of Array.from(element.attributes)) {
-			if (attr.name === "xmlns" && attr.value !== "http://www.w3.org/2000/svg") return "annotation SVGs must use the SVG namespace";
-			if (attr.name.startsWith("xmlns:") && (attr.name !== "xmlns:xlink" || attr.value !== "http://www.w3.org/1999/xlink")) return "annotation SVGs cannot declare namespace aliases";
-			if (attr.name.includes(":") && !["xmlns:xlink", "xlink:href", "xml:lang", "xml:space"].includes(attr.name)) return "annotation SVGs cannot use qualified attribute aliases";
-			if (attr.name === "xlink:href") {
-				let owner: Element | null = element;
-				while (owner && !owner.hasAttribute("xmlns:xlink")) owner = owner.parentElement;
-				if (owner?.getAttribute("xmlns:xlink") !== "http://www.w3.org/1999/xlink") return "xlink:href requires the standard XLink namespace declaration";
-			}
-			if (/^on/i.test(attr.name)) return "annotation SVGs cannot contain event handlers";
-			if (attr.name === "xml:base" || /\\|@import/i.test(attr.value)) return "annotation SVGs cannot change resource bases or use escaped resource syntax";
-			if ((attr.name === "href" || attr.name === "xlink:href") && element !== image && !/^#[A-Za-z_][\w:.-]*$/.test(attr.value)) return "annotation SVGs cannot reference other files or URLs";
-			if (/url\s*\(/i.test(attr.value) && !/^url\(\s*['"]?#[A-Za-z_][\w:.-]*['"]?\s*\)$/.test(attr.value)) return "annotation SVG resources must be local fragment references";
+			const allowLearnerImageHref = element === image && (attr.name === "href" || attr.name === "xlink:href");
+			const problem = staticSvgAttributeProblem(element, attr, "annotation SVGs", allowLearnerImageHref);
+			if (problem) return problem;
 		}
 	}
 	return null;

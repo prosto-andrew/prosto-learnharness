@@ -61,8 +61,8 @@ async function fixture() {
 		} } },
 		WebSocket: Socket, AudioContext: AudioGraph, AudioWorkletNode: Worklet,
 		IS_REACT_ACT_ENVIRONMENT: true,
-		fetch: async (url: string) => {
-			if (url === "/api/stt/token") return Response.json({ token: "test-token" });
+		fetch: async (url: string, init?: RequestInit) => {
+			if (url === "/api/stt/token") { assert.equal(init?.method, "POST"); return Response.json({ token: "test-token" }); }
 			assert.equal(url, "/api/settings");
 			return Response.json({ settings: { version: 1, dictation: { language: "en" } } });
 		},

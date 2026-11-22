@@ -13,6 +13,8 @@ import * as path from "node:path";
 import { after, describe, it } from "node:test";
 import { createCanvas } from "@napi-rs/canvas";
 import { readTool } from "../src/agent/tools/read.ts";
+import { setFileAccessPolicy } from "../src/agent/tools/file-access.ts";
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lh-read-test-"));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
