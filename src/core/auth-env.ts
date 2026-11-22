@@ -29,6 +29,8 @@ export function externalCliEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Pro
 	for (const name of fillGap) {
 		if (!realEnv.has(name)) delete result[name];
 	}
+	// Strip internal LearnHarness runtime secrets/config (including desktop API
+	// capability vars) so external CLIs never inherit them.
 	for (const name of INTERNAL_LEARN_HARNESS_ENV) {
 		delete result[name];
 	}

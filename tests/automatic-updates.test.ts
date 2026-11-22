@@ -60,6 +60,7 @@ function fixture({ packaged = true, updaterMissing = false, env = {} }: { packag
 		bounds = { x: 0, y: 0, width: 700, height: 700 };
 		constructor() { super(); windows.push(this); }
 		loadURL() { this.webContents.loading = true; }
+		isDestroyed() { return false; }
 		isMinimized() { return this.minimized; }
 		restore() { this.minimized = false; }
 		focus() { this.focused = true; }
@@ -227,6 +228,20 @@ describe("startup, menu wiring, and trusted IPC window guards", () => {
 		}
 		sender.mainFrame.url = "https://untrusted.invalid/";
 		assert.throws(() => checkUpdate(validEvent), /Untrusted/);
+	});
+
+	it("startup-message IPC stays a safe no-op without loading startup-messages.cjs", async () => {
+		const f = fixture({ packaged: true });
+		await f.run("main()");
+		const appWin = f.windows[0]!;
+		const sender = appWin.webContents;
+		const validEvent = { sender, senderFrame: sender.mainFrame };
+		const take = f.handles.get("lh:startup-message:take")!;
+		const dismiss = f.handles.get("lh:startup-message:dismiss")!;
+		assert.equal(take(validEvent), null);
+		assert.equal(dismiss(validEvent, "msg-1"), false);
+		assert.equal(take({ sender: {}, senderFrame: sender.mainFrame }), null);
+		assert.equal(dismiss({ sender: {}, senderFrame: sender.mainFrame }, "msg-1"), false);
 	});
 
 	it("menu navigation failure does not throw or trigger update checks", async () => {
