@@ -2,6 +2,7 @@
  *  Replaces Unix-only `NODE_ENV=test` shell prefix and shell-expanded globs. */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,11 +31,25 @@ const args = [
 	...defaultFiles,
 ];
 
-const result = spawnSync(process.execPath, args, {
-	cwd: root,
-	stdio: "inherit",
-	env: { ...process.env, NODE_ENV: "test" },
-});
+const tempDataDir = process.env.LH_DATA_DIR
+	? null
+	: fs.mkdtempSync(path.join(os.tmpdir(), "lh-test-data-"));
 
-if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
+try {
+	const result = spawnSync(process.execPath, args, {
+		cwd: root,
+		stdio: "inherit",
+		env: {
+			...process.env,
+			NODE_ENV: "test",
+			...(tempDataDir ? { LH_DATA_DIR: tempDataDir } : {}),
+		},
+	});
+
+	if (result.error) throw result.error;
+	process.exitCode = result.status ?? 1;
+} finally {
+	if (tempDataDir) {
+		fs.rmSync(tempDataDir, { recursive: true, force: true });
+	}
+}

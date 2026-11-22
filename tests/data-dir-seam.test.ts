@@ -12,11 +12,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
-const TSX_LOADER = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.mjs");
+const TSX_LOADER = pathToFileURL(path.join(REPO_ROOT, "node_modules", "tsx", "dist", "loader.mjs")).href;
 
 describe("LH_DATA_DIR seam", () => {
 	it("relocates data/chats/graph under LH_DATA_DIR, keeps prompts ROOT-anchored", async () => {
@@ -38,10 +39,13 @@ describe("LH_DATA_DIR seam", () => {
 	});
 
 	it("unset = the repo data/ exactly as before (fresh child process, no env)", () => {
+		const childEnv = { ...process.env };
+		delete childEnv.LH_DATA_DIR;
+		const configUrl = pathToFileURL(path.join(REPO_ROOT, "config.ts")).href;
 		const out = execFileSync(
 			process.execPath,
-			["--import", TSX_LOADER, "--eval", `const m = await import(${JSON.stringify(path.join(REPO_ROOT, "config.ts"))}); console.log(JSON.stringify({ data: m.PATHS.data, chats: m.PATHS.chats }));`],
-			{ cwd: REPO_ROOT, encoding: "utf-8" },
+			["--import", TSX_LOADER, "--eval", `const m = await import(${JSON.stringify(configUrl)}); console.log(JSON.stringify({ data: m.PATHS.data, chats: m.PATHS.chats }));`],
+			{ cwd: REPO_ROOT, encoding: "utf-8", env: childEnv },
 		);
 		const parsed = JSON.parse(out) as { data: string; chats: string | null };
 		assert.equal(parsed.data, path.join(REPO_ROOT, "data"));
