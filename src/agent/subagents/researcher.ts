@@ -67,8 +67,12 @@ Numbered findings with inline source citations:
 ## Gaps
 What couldn't be answered. Suggested next steps.`;
 
+export const DEFAULT_RESEARCHER_MAX_TURNS = 20;
+
 export interface ResearcherRunOptions {
 	engine?: PiEngine;
+	/** Optional assistant-turn cap; defaults to DEFAULT_RESEARCHER_MAX_TURNS (20). */
+	maxTurns?: number;
 	/** The search seam (search port wave, 2026-09-20): resolves the LIVE
 	 *  provider per call, null = honestly unavailable (the web_search tool
 	 *  reports that in its output — no crash, no silent fallback). Absent
@@ -99,6 +103,7 @@ export async function runResearcherAgent(prompt: string, opts: ResearcherRunOpti
 		prompt,
 		engine: opts.engine,
 		systemPrompt: INSTRUCTIONS,
+		maxTurns: opts.maxTurns ?? DEFAULT_RESEARCHER_MAX_TURNS,
 		abortSignal: opts.abortSignal,
 		onUsage: opts.onUsage,
 		onToolStart: opts.onToolStart,

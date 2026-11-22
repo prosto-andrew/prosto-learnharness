@@ -319,4 +319,56 @@ describe("hardening security regressions", () => {
 		const src = fs.readFileSync(new URL("../app/chat/[id]/page.tsx", import.meta.url), "utf8");
 		assert.doesNotMatch(src, /searchParams|\bprompt\b/);
 	});
+
+	it("v0.7.0 hardening: background subagents enforce default maxTurns ceilings", async () => {
+		const { DEFAULT_SUBAGENT_MAX_TURNS } = await import("../src/agent/subagents/pi-run.ts");
+		const { DEFAULT_DEMO_BUILDER_MAX_STEPS } = await import("../src/agent/subagents/demo-builder.ts");
+		const { DEFAULT_PDF_READER_MAX_ITERATIONS } = await import("../src/agent/subagents/pdf-reader.ts");
+		const { DEFAULT_RESEARCHER_MAX_TURNS } = await import("../src/agent/subagents/researcher.ts");
+		const { DEFAULT_VISUAL_MAKER_MAX_ITERATIONS } = await import("../src/agent/subagents/visual-maker.ts");
+		const { DEFAULT_SUBMIT_AGENT_MAX_TURNS, DEFAULT_SUBMIT_AGENT_EXPLORE_MAX_TURNS } = await import("../src/agent/subagents/submit-agent.ts");
+		const { DEFAULT_PLUGIN_WORKER_MAX_TURNS } = await import("../src/agent/plugin-workers.ts");
+		assert.equal(DEFAULT_SUBAGENT_MAX_TURNS, 32);
+		assert.equal(DEFAULT_DEMO_BUILDER_MAX_STEPS, 32);
+		assert.equal(DEFAULT_PDF_READER_MAX_ITERATIONS, 24);
+		assert.equal(DEFAULT_RESEARCHER_MAX_TURNS, 20);
+		assert.equal(DEFAULT_VISUAL_MAKER_MAX_ITERATIONS, 16);
+		assert.equal(DEFAULT_SUBMIT_AGENT_MAX_TURNS, 8);
+		assert.equal(DEFAULT_SUBMIT_AGENT_EXPLORE_MAX_TURNS, 24);
+		assert.equal(DEFAULT_PLUGIN_WORKER_MAX_TURNS, 16);
+	});
+
+	it("v0.7.0 hardening: electron/chatgpt.cjs fileStore rejects non-regular files (lstat)", async () => {
+		const { createRequire } = await import("node:module");
+		const req = createRequire(import.meta.url);
+		const { fileStore } = req("../electron/chatgpt.cjs") as { fileStore: (file: string) => { read(): Promise<unknown> } };
+		const dirAsCreds = path.join(scratch, "chatgpt-dir");
+		fs.mkdirSync(dirAsCreds, { recursive: true });
+		await assert.rejects(() => fileStore(dirAsCreds).read(), { code: "storage" });
+		assert.equal(await fileStore(path.join(scratch, "missing-chatgpt.json")).read(), null);
+	});
+
+	it("v0.7.0 hardening: remote-model-catalog stays offline on init and ignores non-regular cache", async () => {
+		const origFetch = globalThis.fetch;
+		let fetchCalls = 0;
+		globalThis.fetch = (async () => { fetchCalls++; throw new Error("unexpected network"); }) as typeof fetch;
+		try {
+			const dirCache = path.join(dataDir, "model-catalog.json");
+			fs.mkdirSync(dirCache, { recursive: true });
+			const { initializeModelCatalog } = await import("../src/server/remote-model-catalog.ts");
+			initializeModelCatalog();
+			assert.equal(fetchCalls, 0);
+			fs.rmSync(dirCache, { recursive: true, force: true });
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
+	it("v0.7.0 hardening: electron/main.cjs disables startup-messages and headless renderPdfPages disables XFA/workerFetch", () => {
+		const mainSrc = fs.readFileSync(new URL("../electron/main.cjs", import.meta.url), "utf8");
+		assert.doesNotMatch(mainSrc, /startup-messages\.cjs/);
+		assert.doesNotMatch(mainSrc, /startMessages\s*\(/);
+		const headlessSrc = fs.readFileSync(new URL("../src/agent/subagents/headless.ts", import.meta.url), "utf8");
+		assert.match(headlessSrc, /pdfjs\.getDocument\(\{[^}]*enableXfa:\s*false[^}]*useWorkerFetch:\s*false/);
+	});
 });

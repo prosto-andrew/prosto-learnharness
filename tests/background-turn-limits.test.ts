@@ -43,7 +43,7 @@ test("research runs past twelve tool turns and delivers only the natural final a
 	assert.equal(usage, 16);
 });
 
-for (const maxTurns of [undefined, 2]) test(`shared runner ${maxTurns === undefined ? "has no default cap" : "enforces an explicit cap"}`, async () => {
+for (const maxTurns of [undefined, 2]) test(`shared runner ${maxTurns === undefined ? "allows deep runs within safety ceiling" : "enforces an explicit cap"}`, async () => {
 	const { faux, engine } = scripted([...Array.from({ length: 25 }, (_, index) => toolTurn(index)), fauxAssistantMessage("Completed")]);
 	const events: string[] = [];
 	const result = await runSubagent([again], { engine, systemPrompt: "Offline", prompt: "Offline", maxTurns,
@@ -53,6 +53,21 @@ for (const maxTurns of [undefined, 2]) test(`shared runner ${maxTurns === undefi
 	assert.equal(events.filter(type => type === "agent_end").length, 1);
 	assert.equal(events.filter(type => type === "turn_end").length, maxTurns ?? 26);
 	assert.equal(result.text, maxTurns === undefined ? "Completed" : "Progress 1; not the deliverable.");
+});
+
+test("default safety ceilings stop runaway background loops without unbounded spending", async () => {
+	const infiniteSubagent = scripted(Array.from({ length: 40 }, (_, index) => toolTurn(index)));
+	await runSubagent([again], { engine: infiniteSubagent.engine, systemPrompt: "Offline", prompt: "Offline" });
+	assert.equal(infiniteSubagent.faux.state.callCount, 32);
+
+	const infiniteResearch = scripted(Array.from({ length: 30 }, (_, index) => fauxAssistantMessage([
+		fauxToolCall("web_search", { query: `loop_${index}` }, { id: `loop_${index}` }),
+	], { stopReason: "toolUse" })));
+	await runResearcherAgent("Looping question", {
+		engine: infiniteResearch.engine,
+		search: () => ({ id: "tavily", async search() { return []; } }),
+	});
+	assert.equal(infiniteResearch.faux.state.callCount, 20);
 });
 
 for (const role of ["extractor", "auditor"] as const) test(`${role} can correct/explore beyond its former cap and stops on accepted submission`, async () => {

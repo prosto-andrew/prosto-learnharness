@@ -72,9 +72,13 @@ export function subagentEngine(role: ModelRole | undefined, override?: PiEngine)
 	return piEngineFor(role);
 }
 
+/** Safety ceiling when a caller omits maxTurns (prevents unbounded Cost-DoS loops). */
+export const DEFAULT_SUBAGENT_MAX_TURNS = 32;
+
 export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRunOptions): Promise<SubagentRunResult> {
 	if (opts.abortSignal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
 	const engine = subagentEngine(opts.role, opts.engine);
+	const maxTurns = opts.maxTurns ?? DEFAULT_SUBAGENT_MAX_TURNS;
 	let turns = 0;
 	// Debug recorder (owner, 2026-10-04): raw provider events per job run.
 	const providerEvents = opts.chatId && opts.role ? providerEventObserver(opts.chatId, `job:${opts.role}`) : undefined;
@@ -104,7 +108,7 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 		// exits before the steering poll, exactly the old boolean-true).
 		finishTurn: (turn) => {
 			turns++;
-			return (opts.maxTurns !== undefined && turns >= opts.maxTurns) || opts.shouldStop?.(turn.message, turn.toolResults) === true
+			return turns >= maxTurns || opts.shouldStop?.(turn.message, turn.toolResults) === true
 				? { action: "end" }
 				: undefined;
 		},

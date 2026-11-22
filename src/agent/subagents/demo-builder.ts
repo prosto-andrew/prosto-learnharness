@@ -34,7 +34,7 @@ export interface DemoBuilderOptions {
 	/** Test seam: scripted engine; production uses the demoBuilder role. */
 	engine?: PiEngine;
 	headless?: HeadlessApi;
-	/** Optional assistant-turn cap; omitted = no turn-count limit. */
+	/** Optional assistant-turn cap; defaults to DEFAULT_DEMO_BUILDER_MAX_STEPS (32). */
 	maxSteps?: number;
 	/** Live activity-line callback (updates the job record). */
 	onActivity?: (line: string) => void;
@@ -180,6 +180,8 @@ function failureSummary(result: DemoRunResult | null): string {
 	return details.length > 0 ? `${summarizeCounts(result)} — ${details.join(" | ")}` : summarizeCounts(result);
 }
 
+export const DEFAULT_DEMO_BUILDER_MAX_STEPS = 32;
+
 export async function runDemoBuilder(input: DemoBuilderInput, opts: DemoBuilderOptions = {}): Promise<DemoResult> {
 	const headless = opts.headless ?? getHeadless();
 	const title = input.title.trim() || "Interactive demo";
@@ -208,7 +210,7 @@ export async function runDemoBuilder(input: DemoBuilderInput, opts: DemoBuilderO
 			engine: opts.engine,
 			systemPrompt: INSTRUCTIONS,
 			prompt,
-			maxTurns: opts.maxSteps,
+			maxTurns: opts.maxSteps ?? DEFAULT_DEMO_BUILDER_MAX_STEPS,
 			abortSignal: opts.abortSignal,
 			onUsage: (usage) => opts.onUsage?.(usage),
 			onToolStart: (toolName) => opts.onActivity?.(toolName),

@@ -156,20 +156,28 @@ test("natural completion, correction exhaustion and provider errors have explici
 	}
 });
 
-test("omitted maxTurns permits corrections beyond the old budget and stops at the accepted submission", async t => {
+test("omitted maxTurns enforces default safety ceiling (16), while explicit maxTurns permits longer runs", async t => {
 	const f = fixture(t, (_context, index) => message([submit(index < 20 ? "bad" : "accepted", `submit_${index}`)]));
 	f.register({ validateResult(result) { if (result !== "accepted") throw new Error("Please correct"); } });
 	const started = f.service.start("worker", options());
 	assert.equal(Object.hasOwn(started, "maxTurns"), false);
 	assert.equal(f.service.start("worker", options({ maxTurns: undefined })).id, started.id);
 	assert.throws(() => f.service.start("worker", options({ maxTurns: 4 })), /requestId/);
-	assert.deepEqual(await f.service.wait(started.id), { id: started.id, status: "succeeded", result: "accepted" });
+	const capped = await f.service.wait(started.id);
+	assert.equal(capped.status, "failed");
+	assert.equal(capped.error.code, "max_turns");
 	await tick();
-	assert.equal(f.calls.length, 21, "no call follows an accepted submission");
+	assert.equal(f.calls.length, 16, "default safety ceiling stops runaway loops at 16 turns");
 	const saved = f.store.get(started.id)!;
 	assert.equal(Object.hasOwn(saved, "maxTurns"), false);
-	assert.equal(saved.turns, 21);
-	assert.equal(saved.usage?.steps, 21);
+	assert.equal(saved.turns, 16);
+
+	const f2 = fixture(t, (_context, index) => message([submit(index < 20 ? "bad" : "accepted", `submit2_${index}`)]));
+	f2.register({ validateResult(result) { if (result !== "accepted") throw new Error("Please correct"); } });
+	const explicit = f2.service.start("worker", options({ requestId: "request_explicit", maxTurns: 25 }));
+	assert.deepEqual(await f2.service.wait(explicit.id), { id: explicit.id, status: "succeeded", result: "accepted" });
+	await tick();
+	assert.equal(f2.calls.length, 21, "no call follows an accepted submission");
 });
 
 test("cancel fences async validation; waiter abort and unsubscription do not cancel the task", async t => {

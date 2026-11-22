@@ -58,11 +58,13 @@ export interface VisualMakerInput {
 /** The placeholder href the model gives the learner's picture. */
 export { LEARNER_IMAGE_HREF };
 
+export const DEFAULT_VISUAL_MAKER_MAX_ITERATIONS = 16;
+
 export interface VisualMakerOptions {
 	/** Test seam: scripted engine; production uses the visualMaker role. */
 	engine?: PiEngine;
 	headless?: HeadlessApi;
-	/** Optional assistant-turn cap; omitted = no turn-count limit. */
+	/** Optional assistant-turn cap; defaults to DEFAULT_VISUAL_MAKER_MAX_ITERATIONS (16). */
 	maxIterations?: number;
 	/** Live activity-line callback (updates the job record). */
 	onActivity?: (line: string) => void;
@@ -206,7 +208,7 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	const headless = opts.headless ?? getHeadless();
 	const brief = input.brief.trim() || "(no brief)";
 	const pdf = input.pdf;
-	const maxIterations = opts.maxIterations;
+	const maxIterations = opts.maxIterations ?? DEFAULT_VISUAL_MAKER_MAX_ITERATIONS;
 
 	const reason = headless.unavailableReason();
 	if (reason) {
@@ -283,7 +285,7 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	const streamEngine = { ...engine, streamFn: backgroundCaptureStream(requests.streamFn, capture) };
 
 	try {
-		for (let iteration = 0; maxIterations === undefined || iteration < maxIterations; iteration++) {
+		for (let iteration = 0; iteration < maxIterations; iteration++) {
 			// One model call per iteration (streamSimple, no agent loop — this
 			// loop owns tool execution and the image-in-the-loop injection).
 			const result = await streamOnce(

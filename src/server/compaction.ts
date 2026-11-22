@@ -80,6 +80,7 @@ async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ s
 		prompt,
 		engine,
 		systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
+		maxTurns: 2,
 		// Operational work for the foreground conversation, not a worker task.
 		bypassWorkerRequestAdmission: true,
 		onUsage: (u) => {

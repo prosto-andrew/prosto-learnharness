@@ -45,6 +45,9 @@ export function healStringifiedArrays(raw: unknown): unknown {
 	return out;
 }
 
+export const DEFAULT_SUBMIT_AGENT_MAX_TURNS = 8;
+export const DEFAULT_SUBMIT_AGENT_EXPLORE_MAX_TURNS = 24;
+
 export async function runSubmitAgent<T>(opts: {
 	role: ModelRole;
 	toolName: string;
@@ -110,7 +113,7 @@ export async function runSubmitAgent<T>(opts: {
 			engine: opts.engine,
 			systemPrompt: opts.systemPrompt,
 			prompt: opts.prompt,
-			maxTurns: opts.maxTurns,
+			maxTurns: opts.maxTurns ?? (opts.extraTools ? DEFAULT_SUBMIT_AGENT_EXPLORE_MAX_TURNS : DEFAULT_SUBMIT_AGENT_MAX_TURNS),
 			abortSignal: opts.signal,
 			chatId: opts.chatId,
 			onAssistantMessage: (message, step) =>

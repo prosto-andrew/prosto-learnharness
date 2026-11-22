@@ -28,6 +28,8 @@ import {
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { PATHS } from "../config.ts";
+import { setFileAccessPolicy } from "../src/agent/tools/file-access.ts";
+setFileAccessPolicy(() => ({ restricted: false, folders: [] }));
 import { learnerImageFromBytes } from "../src/agent/tools/learner-image.ts";
 import { checkPdfPage, cropFraction, loadPdfFigureSource, type PdfFigureImage, type PdfFigureSource } from "../src/agent/tools/pdf-figure.ts";
 import { jobTools } from "../src/agent/tools/jobs.ts";

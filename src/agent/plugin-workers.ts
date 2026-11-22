@@ -78,6 +78,9 @@ interface Task {
 	activityRecord?: PluginTaskRecord;
 }
 
+/** Default safety ceiling when a plugin worker omits maxTurns (Cost-DoS guard). */
+export const DEFAULT_PLUGIN_WORKER_MAX_TURNS = 16;
+
 /** Standalone result tasks. One service/writer per directory; no admission pool,
  * replay, DAG, transport, or dependence on a subscribed view. */
 export function createPluginWorkerService(deps: PluginWorkerServiceDeps): PluginWorkerService {
@@ -199,7 +202,8 @@ export function createPluginWorkerService(deps: PluginWorkerServiceDeps): Plugin
 				}
 				commit(t, { ...t.record, messages });
 			};
-			await runSubagent(tools, { engine, systemPrompt: d.instructions, messages: clone(t.record.messages), maxTurns: t.record.maxTurns, abortSignal: t.controller.signal,
+			const effectiveMaxTurns = t.record.maxTurns ?? DEFAULT_PLUGIN_WORKER_MAX_TURNS;
+			await runSubagent(tools, { engine, systemPrompt: d.instructions, messages: clone(t.record.messages), maxTurns: effectiveMaxTurns, abortSignal: t.controller.signal,
 				beforeRequest: active, shouldStop: () => terminal(t.record),
 				onEvent: (event: AgentEvent) => {
 					if (disposed || t.closed || t.poisoned || t.controller.signal.aborted) throw t.poisoned ?? new Error("Task writer is closed");
@@ -235,7 +239,7 @@ export function createPluginWorkerService(deps: PluginWorkerServiceDeps): Plugin
 			});
 			if (!terminal(t.record)) {
 				active();
-				const exhausted = t.record.maxTurns !== undefined && t.record.turns >= t.record.maxTurns;
+				const exhausted = t.record.turns >= effectiveMaxTurns;
 				finish(t, "failed", { code: exhausted ? "max_turns" : "no_result", message: exhausted ? "Worker exhausted maxTurns without an accepted result" : "Worker finished without submitting a result" });
 			}
 		} catch (error) {

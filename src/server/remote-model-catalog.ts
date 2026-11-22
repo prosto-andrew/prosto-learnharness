@@ -178,7 +178,8 @@ const catalogGlobal = globalThis as typeof globalThis & { [STATE_KEY]?: State };
 
 function restoreSnapshot(): Catalog {
 	try {
-		if (fs.statSync(FILE).size > MAX_SNAPSHOT_BYTES) return new Map();
+		const stat = fs.lstatSync(FILE);
+		if (!stat.isFile() || stat.size > MAX_SNAPSHOT_BYTES) return new Map();
 		const saved: unknown = JSON.parse(fs.readFileSync(FILE, "utf-8"));
 		if (record(saved) && saved.version === 1 && record(saved.providers)) {
 			return new Map([...builtins.keys()].flatMap((provider) => {

@@ -58,6 +58,9 @@ Your FINAL assistant message is your entire deliverable — it must stand alone,
 claim cited as (p. N). End with a line "Pages consulted: N, N, …" listing every page you
 extracted or rendered.`;
 
+/** Default safety ceiling for pdf-reader iterations (high enough for deep PDFs,
+ *  bounded to prevent unbounded Cost-DoS loops). */
+export const DEFAULT_PDF_READER_MAX_ITERATIONS = 24;
 /** Rendered pages per pdf_render call — the skill renders selectively; a
  *  batch cap keeps one over-eager call from flooding the vision context. */
 const RENDER_BATCH_CAP = 6;
@@ -70,7 +73,7 @@ export interface PdfReaderOptions {
 	onUsage?: (usage: Usage) => void;
 	onActivity?: (line: string) => void;
 	headless?: HeadlessApi;
-	/** Optional assistant-turn cap; omitted = no turn-count limit. */
+	/** Optional assistant-turn cap; defaults to DEFAULT_PDF_READER_MAX_ITERATIONS (24). */
 	maxIterations?: number;
 	/** Debug: raw provider-event recording key (LH_PROVIDER_EVENTS=1). */
 	chatId?: string;
@@ -168,7 +171,7 @@ export async function runPdfReaderAgent(
 	input: PdfReaderInput,
 	opts: PdfReaderOptions = {},
 ): Promise<PdfResult> {
-	const maxIterations = opts.maxIterations;
+	const maxIterations = opts.maxIterations ?? DEFAULT_PDF_READER_MAX_ITERATIONS;
 	let pdfPath = input.path;
 	let openError: string | null;
 	// Source denial is an ordinary upfront PDF failure, before parsing,
@@ -216,7 +219,7 @@ export async function runPdfReaderAgent(
 	let captureError: unknown;
 
 	try {
-		for (let iteration = 0; maxIterations === undefined || iteration < maxIterations; iteration++) {
+		for (let iteration = 0; iteration < maxIterations; iteration++) {
 			const result = await streamOnce(
 				streamEngine,
 				INSTRUCTIONS,
