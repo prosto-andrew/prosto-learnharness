@@ -371,4 +371,56 @@ describe("hardening security regressions", () => {
 		const headlessSrc = fs.readFileSync(new URL("../src/agent/subagents/headless.ts", import.meta.url), "utf8");
 		assert.match(headlessSrc, /pdfjs\.getDocument\(\{[^}]*enableXfa:\s*false[^}]*useWorkerFetch:\s*false/);
 	});
+
+	it("bounded PDF reader rejects directories, empty files, and >64 MiB files across pdf-ops and headless", async () => {
+		const { MAX_PDF_BYTES, pdfProbe, readBoundedPdfFile } = await import("../src/agent/subagents/pdf-ops.ts");
+		const { realHeadless } = await import("../src/agent/subagents/headless.ts");
+
+		const emptyPdf = path.join(sourceDir, "empty.pdf");
+		fs.writeFileSync(emptyPdf, "");
+		const hugePdf = path.join(sourceDir, "huge.pdf");
+		fs.writeFileSync(hugePdf, "%PDF-1.4\n");
+		fs.truncateSync(hugePdf, MAX_PDF_BYTES + 1);
+
+		await assert.rejects(() => readBoundedPdfFile(sourceDir), /not a regular file/);
+		await assert.rejects(() => readBoundedPdfFile(emptyPdf), /file is empty/);
+		await assert.rejects(() => readBoundedPdfFile(hugePdf), /PDF exceeds 64 MiB/);
+
+		await assert.rejects(() => pdfProbe(sourceDir), /not a regular file/);
+		await assert.rejects(() => pdfProbe(hugePdf), /PDF exceeds 64 MiB/);
+
+		await assert.rejects(() => realHeadless.renderPdfPages(sourceDir, [1]), /not a regular file/);
+		await assert.rejects(() => realHeadless.renderPdfPages(emptyPdf, [1]), /file is empty/);
+		await assert.rejects(() => realHeadless.renderPdfPages(hugePdf, [1]), /PDF exceeds 64 MiB/);
+	});
+
+	it("start:standalone launcher binds localhost and pins repo-root data/auth defaults", async () => {
+		const { resolveStandaloneLaunch } = await import("../scripts/start-standalone.mjs");
+		const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+			scripts?: Record<string, string>;
+		};
+		assert.equal(pkg.scripts?.start, "next start -H localhost");
+		assert.equal(pkg.scripts?.["start:standalone"], "node scripts/start-standalone.mjs");
+
+		const fakeRoot = path.join(scratch, "repo");
+		const defaults = resolveStandaloneLaunch({}, fakeRoot);
+		assert.equal(defaults.standalone, path.join(fakeRoot, ".next", "standalone"));
+		assert.equal(defaults.server, path.join(fakeRoot, ".next", "standalone", "server.js"));
+		assert.equal(defaults.env.NODE_ENV, "production");
+		assert.equal(defaults.env.HOSTNAME, "localhost");
+		assert.equal(defaults.env.PORT, "3000");
+		assert.equal(defaults.env.LH_DATA_DIR, path.join(fakeRoot, "data"));
+		assert.equal(defaults.env.LH_AUTH_FILE, path.join(fakeRoot, "auth.json"));
+
+		const custom = resolveStandaloneLaunch({
+			HOSTNAME: "127.0.0.1",
+			PORT: "4123",
+			LH_DATA_DIR: "./custom-data",
+			LH_AUTH_FILE: "./custom-auth.json",
+		}, fakeRoot);
+		assert.equal(custom.env.HOSTNAME, "127.0.0.1");
+		assert.equal(custom.env.PORT, "4123");
+		assert.equal(custom.env.LH_DATA_DIR, path.resolve("./custom-data"));
+		assert.equal(custom.env.LH_AUTH_FILE, path.resolve("./custom-auth.json"));
+	});
 });

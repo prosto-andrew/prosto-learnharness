@@ -10,7 +10,7 @@ import { backgroundCaptureStream, createBackgroundCapture, type BackgroundCaptur
 import { createWorkerRequestScope } from "../worker-request-admission.ts";
 import type { PdfResult, PdfToolInput } from "../../core/contracts.ts";
 import { getHeadless, type HeadlessApi } from "./headless.ts";
-import { pdfExtract, pdfInfo, pdfProbe, pdfSearch, type PdfSearchHit } from "./pdf-ops.ts";
+import { MAX_PDF_BYTES, PDF_SIZE_ERROR, pdfExtract, pdfInfo, pdfProbe, pdfSearch, type PdfSearchHit } from "./pdf-ops.ts";
 
 /**
  * The pdf-reader sub-agent (sources v0, 2026-09): reads a learner-provided
@@ -413,6 +413,7 @@ async function probeReadable(pdfPath: string): Promise<string | null> {
 		const stat = await fs.stat(pdfPath);
 		if (!stat.isFile()) return "not a regular file";
 		if (stat.size === 0) return "file is empty";
+		if (stat.size > MAX_PDF_BYTES) return PDF_SIZE_ERROR;
 		// parse probe: pdfProbe throws pdfjs's precise error for garbage files
 		await pdfProbe(pdfPath);
 		return null;

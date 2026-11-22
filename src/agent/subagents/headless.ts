@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { standardFontsDir } from "./pdf-ops";
+import { readBoundedPdfFile, standardFontsDir } from "./pdf-ops";
 import { svgImageSource } from "../../../lib/svg-image-source";
 
 /**
@@ -734,14 +734,14 @@ async function renderPdfPages(
 	// that used to run in the Chrome shim tab; only the canvas host changed
 	// (Skia in-process instead of a DOM canvas). Text-side pdf tools never
 	// needed a browser; now renders don't either.
+	const data = await readBoundedPdfFile(path.resolve(pdfPath));
 	const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-	const data = new Uint8Array(fs.readFileSync(path.resolve(pdfPath)));
 	// Standard-font data as a directory path (live-smoke finding 2026-09-19:
 	// without it pdfjs renders non-embedded standard fonts via fallback);
 	// verbosity 0 = errors only (JBIG2 noise on scanned PDFs).
 	const loadingTask = pdfjs.getDocument({ data, standardFontDataUrl: standardFontsDir(), verbosity: 0, enableXfa: false, useWorkerFetch: false });
-	const doc = await loadingTask.promise;
 	try {
+		const doc = await loadingTask.promise;
 		const out: RenderedPdfPage[] = [];
 		for (const pageNo of pages) {
 			if (pageNo < 1 || pageNo > doc.numPages) continue;

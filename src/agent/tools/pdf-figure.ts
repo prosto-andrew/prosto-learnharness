@@ -1,7 +1,5 @@
-import type { Stats } from "node:fs";
-import * as fs from "node:fs/promises";
 import { renderOpenPdfPage, type PdfCrop } from "../subagents/headless.ts";
-import { openPdfBytes } from "../subagents/pdf-ops.ts";
+import { openPdfBytes, readBoundedPdfFile } from "../subagents/pdf-ops.ts";
 import { resolveSourcePath } from "./fs-shared.ts";
 import { learnerImageFromBytes, type LearnerImage } from "./learner-image.ts";
 
@@ -10,8 +8,6 @@ const FIGURE_LONG_SIDE = 1600;
 /** A small crop stops gaining detail here instead of upscaling further. */
 const MAX_FIGURE_DPI = 300;
 export const MIN_CROP_SIDE = 16;
-const MAX_PDF_FIGURE_BYTES = 64 * 1024 * 1024;
-const PDF_FIGURE_SIZE_ERROR = "PDF exceeds 64 MiB; provide a smaller PDF";
 
 /** A page or crop of the learner's PDF, stored like any learner image. */
 export interface PdfFigureImage extends LearnerImage {
@@ -40,52 +36,13 @@ export interface PdfFigureSource {
 	close(): Promise<void>;
 }
 
-function checkPdfFile(stat: Stats): void {
-	if (!stat.isFile()) throw new Error("it is not a regular file");
-	if (stat.size === 0) throw new Error("the file is empty");
-	if (stat.size > MAX_PDF_FIGURE_BYTES) throw new Error(PDF_FIGURE_SIZE_ERROR);
-}
-
-/** Read at most the checked size plus one byte, including if the file grows
- * during the read. Owned storage can be handed directly to pdfjs. */
-async function readPdfFigureFile(absolute: string, signal?: AbortSignal): Promise<Uint8Array> {
-	checkPdfFile(await fs.stat(absolute));
-	signal?.throwIfAborted();
-	const handle = await fs.open(absolute, "r");
-	try {
-		const before = await handle.stat();
-		checkPdfFile(before);
-		signal?.throwIfAborted();
-		const bytes = new Uint8Array(before.size);
-		for (let offset = 0; offset < bytes.length;) {
-			const { bytesRead } = await handle.read(bytes, offset, Math.min(64 * 1024, bytes.length - offset), null);
-			signal?.throwIfAborted();
-			if (!bytesRead) throw new Error("the file changed while being read; try again");
-			offset += bytesRead;
-		}
-		const { bytesRead: extra } = await handle.read(new Uint8Array(1), 0, 1, null);
-		signal?.throwIfAborted();
-		const after = await handle.stat();
-		signal?.throwIfAborted();
-		if (after.size > MAX_PDF_FIGURE_BYTES || (extra && bytes.length === MAX_PDF_FIGURE_BYTES)) {
-			throw new Error(PDF_FIGURE_SIZE_ERROR);
-		}
-		if (extra || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
-			throw new Error("the file changed while being read; try again");
-		}
-		return bytes;
-	} finally {
-		await handle.close();
-	}
-}
-
 async function openFigurePdf(rawPath: string, page: number, signal?: AbortSignal) {
 	signal?.throwIfAborted();
 	// Reuse the shared file-access policy, including canonical/symlink checks.
 	const path = resolveSourcePath(rawPath);
 	let opened: Awaited<ReturnType<typeof openPdfBytes>>;
 	try {
-		opened = await openPdfBytes(await readPdfFigureFile(path, signal), signal);
+		opened = await openPdfBytes(await readBoundedPdfFile(path, signal), signal);
 	} catch (error) {
 		signal?.throwIfAborted();
 		const reason = (error as NodeJS.ErrnoException).code === "ENOENT" ? "no such file" : error instanceof Error ? error.message : String(error);

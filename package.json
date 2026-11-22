@@ -16,6 +16,7 @@
 		"dev": "npm run plugins:build-core && npm run plugins:build-authoring && next dev -H localhost",
 		"build": "npm run plugins:build-core && npm run plugins:build-authoring && next build",
 		"start": "next start -H localhost",
+		"start:standalone": "node scripts/start-standalone.mjs",
 		"test": "node scripts/run-tests.mjs",
 		"lint": "eslint .",
 		"typecheck": "tsc --noEmit",

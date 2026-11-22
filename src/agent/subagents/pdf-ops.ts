@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,8 +56,50 @@ export function standardFontsDir(): string {
 	return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "node_modules", "pdfjs-dist", "standard_fonts") + "/";
 }
 
+export const MAX_PDF_BYTES = 64 * 1024 * 1024;
+export const PDF_SIZE_ERROR = "PDF exceeds 64 MiB; provide a smaller PDF";
+
+function checkPdfFile(stat: Stats): void {
+	if (!stat.isFile()) throw new Error("it is not a regular file");
+	if (stat.size === 0) throw new Error("the file is empty");
+	if (stat.size > MAX_PDF_BYTES) throw new Error(PDF_SIZE_ERROR);
+}
+
+/** Read a local regular PDF file with a hard 64 MiB cap and TOCTOU growth guard.
+ *  Owned Uint8Array storage can be handed directly to pdfjs. */
+export async function readBoundedPdfFile(filePath: string, signal?: AbortSignal): Promise<Uint8Array> {
+	checkPdfFile(await fs.stat(filePath));
+	signal?.throwIfAborted();
+	const handle = await fs.open(filePath, "r");
+	try {
+		const before = await handle.stat();
+		checkPdfFile(before);
+		signal?.throwIfAborted();
+		const bytes = new Uint8Array(before.size);
+		for (let offset = 0; offset < bytes.length;) {
+			const { bytesRead } = await handle.read(bytes, offset, Math.min(64 * 1024, bytes.length - offset), null);
+			signal?.throwIfAborted();
+			if (!bytesRead) throw new Error("the file changed while being read; try again");
+			offset += bytesRead;
+		}
+		const { bytesRead: extra } = await handle.read(new Uint8Array(1), 0, 1, null);
+		signal?.throwIfAborted();
+		const after = await handle.stat();
+		signal?.throwIfAborted();
+		if (after.size > MAX_PDF_BYTES || (extra && bytes.length === MAX_PDF_BYTES)) {
+			throw new Error(PDF_SIZE_ERROR);
+		}
+		if (extra || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+			throw new Error("the file changed while being read; try again");
+		}
+		return bytes;
+	} finally {
+		await handle.close();
+	}
+}
+
 async function openDocument(filePath: string) {
-	return openPdfBytes(new Uint8Array(await fs.readFile(filePath)));
+	return openPdfBytes(await readBoundedPdfFile(filePath));
 }
 
 type PdfLoadingTask = Pick<import("pdfjs-dist/legacy/build/pdf.mjs").PDFDocumentLoadingTask, "promise" | "destroy">;
