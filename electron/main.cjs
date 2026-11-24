@@ -833,19 +833,11 @@ async function main() {
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) reopenWindow();
 	});
-	createWindow(url, firstWindow => {
-		const fromFirstWindow = event => !firstWindow.isDestroyed() && event.sender === firstWindow.webContents &&
-			trustedSender(event, new URL(url).origin, BrowserWindow);
+	createWindow(url, () => {
 		// Hardened policy: remote startup announcements (learnharness.ai) are
 		// disabled unconditionally; IPC channels remain safe no-ops.
-		ipcMain.handle("lh:startup-message:take", event => {
-			if (!fromFirstWindow(event)) return null;
-			return null;
-		});
-		ipcMain.handle("lh:startup-message:dismiss", event => {
-			if (!fromFirstWindow(event)) return false;
-			return false;
-		});
+		ipcMain.handle("lh:startup-message:take", () => null);
+		ipcMain.handle("lh:startup-message:dismiss", () => false);
 	});
 	log(`window open: ${url}`);
 	// Startup + 24h checks stay main-owned and read the current preference.
