@@ -133,6 +133,10 @@ describe("hardening security regressions", () => {
 			".config/gh/hosts.yml",
 			".config/gcloud/credentials.db",
 			"Library/Keychains/login.keychain-db",
+			"AppData/Roaming/GitHub CLI/hosts.yml",
+			"AppData/Roaming/gcloud/credentials.db",
+			"AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt",
+			"appdata/roaming/github cli/hosts.yml",
 		]) {
 			assert.equal(isSensitivePath(path.join(homeDir, rel), homeDir, authFile, dataDir), true, rel);
 		}
