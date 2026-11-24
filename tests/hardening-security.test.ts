@@ -122,6 +122,15 @@ describe("hardening security regressions", () => {
 		assert.ok(next.error.endsWith("…"));
 	});
 
+	it("injectDemoCsp puts the CSP before any content, even a commented <head>", async () => {
+		const { DEMO_CSP_META: META, injectDemoCsp } = await import("../lib/demo-csp.ts");
+		const out = injectDemoCsp('<!doctype html><!-- <head> --><html><body><script>1</script></body></html>');
+		assert.ok(out.startsWith("<!doctype html>" + META));
+		assert.ok(out.indexOf(META) < out.indexOf("<!--"));
+		assert.ok(injectDemoCsp("<p>x</p>").startsWith(META));
+		assert.equal(injectDemoCsp, (await import("../src/agent/subagents/headless.ts")).injectDemoCsp);
+	});
+
 	it("isSensitivePath blocks expanded SENSITIVE_HOME_PATHS and PATHS.data", () => {
 		for (const rel of [
 			".kube/config",
