@@ -6,7 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import { runTests } from "../src/runner.ts";
+import { classifyExit, runTests, WINDOWS_PROGRAM_NOT_FOUND } from "../src/runner.ts";
 import type { CodingTests } from "../src/test-result.ts";
 
 async function fixture(t: TestContext) {
@@ -133,7 +133,7 @@ process.stdin.on('end', () => console.log(JSON.stringify({cwd: process.cwd(), fi
   await assertEmptyWorkspace(f.dataDirectory, f.questionId);
 });
 
-test("passes argv literally with no shell expansion and runs in an isolated workspace env", async (t) => {
+test("passes argv literally with no shell expansion and runs with a workspace temp dir and the user's home", async (t) => {
   const f = await fixture(t);
   const prevSecret = process.env.LH_DESKTOP_API_SECRET;
   const prevOpenAi = process.env.OPENAI_API_KEY;
@@ -150,8 +150,8 @@ test("passes argv literally with no shell expansion and runs in an isolated work
   const actual = JSON.parse(result.stdout);
   assert.deepEqual(actual.args, args);
   assert.equal(actual.path, process.env.PATH ?? process.env.Path);
-  assert.equal(actual.home, actual.cwd);
-  assert.equal(actual.userprofile, actual.cwd);
+  assert.equal(actual.home, process.env.HOME);
+  assert.equal(actual.userprofile, process.env.USERPROFILE);
   assert.equal(actual.tmp, actual.cwd);
   assert.equal(actual.temp, actual.cwd);
   assert.equal(actual.tmpdir, actual.cwd);
@@ -170,6 +170,13 @@ test("returns nonzero as failed with both streams, not as an exception", async (
   const f = await fixture(t);
   const result = await runTests({ ...f, tests: nodeTests("process.stdout.write('out'); process.stderr.write('err'); process.exitCode = 23") });
   assert.deepEqual(result, { status: "failed", exitCode: 23, stdout: "out", stderr: "err", stdoutTruncated: false, stderrTruncated: false });
+});
+
+test("classifyExit treats Windows 9009 as a missing program only on win32", () => {
+  assert.deepEqual(classifyExit(0, "linux"), { status: "passed" });
+  assert.deepEqual(classifyExit(1, "win32"), { status: "failed" });
+  assert.deepEqual(classifyExit(9009, "win32"), { status: "error", message: WINDOWS_PROGRAM_NOT_FOUND });
+  assert.deepEqual(classifyExit(9009, "linux"), { status: "failed" });
 });
 
 test("reports missing executables and synchronous invalid spawn arguments as errors", async (t) => {
@@ -195,6 +202,13 @@ test("rejects shells, explicit paths, and unallowlisted programs before spawn", 
     assert.equal(result.status, "error", program);
     assert.equal(result.exitCode, null);
     assert.match(result.message!, /blocked|allowlist|plain executable/i, program);
+    await assertEmptyWorkspace(f.dataDirectory, f.questionId);
+  }
+  for (const program of ["deno", "bun", "go", "cargo", "dotnet"]) {
+    const result = await runTests({ ...f, tests: { program, args: ["-"], code: "" } });
+    assert.equal(result.status, "error", program);
+    assert.equal(result.exitCode, null);
+    assert.match(result.message!, /allowlist/, program);
     await assertEmptyWorkspace(f.dataDirectory, f.questionId);
   }
   const prevExtra = process.env.LH_CODING_ALLOWED_PROGRAMS;

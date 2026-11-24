@@ -121,6 +121,9 @@ test("validateQuestion and validateProblem enforce bare allowlisted programs and
     assert.ok(Array.isArray(qErr) && qErr.length === 1, program);
     assert.ok(Array.isArray(pErr) && pErr.length === 1, program);
   }
+  const denoErr = definition.validateQuestion!({ input: { ...baseInput, payload: { ...baseInput.payload, tests: { ...tests, program: "deno" } } } } as never);
+  assert.ok(Array.isArray(denoErr) && denoErr.length === 1, "deno");
+  assert.match(denoErr[0]!, /allowlist/);
   const prev = process.env.LH_CODING_ALLOWED_PROGRAMS;
   try {
     process.env.LH_CODING_ALLOWED_PROGRAMS = "bash, custom-runner";
