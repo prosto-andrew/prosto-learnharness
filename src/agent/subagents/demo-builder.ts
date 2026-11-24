@@ -3,7 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Usage } from "@earendil-works/pi-ai";
 import { serverExecute } from "../tool-execute.ts";
 import type { PiEngine } from "../models.ts";
-import { FINAL_TURN_NOTICE, runSubagent } from "./pi-run.ts";
+import { runSubagent } from "./pi-run.ts";
 import type { DemoResult } from "../../core/contracts.ts";
 import { getHeadless, type DemoRunResult, type HeadlessApi } from "./headless.ts";
 import { healToolRecord } from "../tools/heal.ts";
@@ -183,6 +183,10 @@ function failureSummary(result: DemoRunResult | null): string {
 
 export const DEFAULT_DEMO_BUILDER_MAX_STEPS = 32;
 
+/** The builder's deliverable is the last write_demo (verified after the loop),
+ *  so its capped final turn keeps write_demo and asks for notes, not output. */
+export const DEMO_FINAL_TURN_NOTICE = "Turn budget reached: this is your final turn and only write_demo remains. If your last run_demo reported problems, call write_demo once with the fixed document; it will be verified automatically. Otherwise finish with your 1-3 sentence notes for the teacher.";
+
 export async function runDemoBuilder(input: DemoBuilderInput, opts: DemoBuilderOptions = {}): Promise<DemoResult> {
 	const headless = opts.headless ?? getHeadless();
 	const title = input.title.trim() || "Interactive demo";
@@ -212,7 +216,7 @@ export async function runDemoBuilder(input: DemoBuilderInput, opts: DemoBuilderO
 			systemPrompt: INSTRUCTIONS,
 			prompt,
 			maxTurns: opts.maxSteps ?? DEFAULT_DEMO_BUILDER_MAX_STEPS,
-			finalTurn: { notice: FINAL_TURN_NOTICE, keepTools: [] },
+			finalTurn: { notice: DEMO_FINAL_TURN_NOTICE, keepTools: ["write_demo"] },
 			abortSignal: opts.abortSignal,
 			onUsage: (usage) => opts.onUsage?.(usage),
 			onToolStart: (toolName) => opts.onActivity?.(toolName),
