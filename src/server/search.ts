@@ -26,16 +26,6 @@ import { effectiveSettings } from "./stores.ts";
 /** The wire-callable shape the adapters close over (tests inject a stub). */
 type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
-function safeHttpUrl(raw: unknown): string | null {
-	if (typeof raw !== "string" || !raw.trim()) return null;
-	try {
-		const protocol = new URL(raw).protocol;
-		return protocol === "http:" || protocol === "https:" ? raw : null;
-	} catch {
-		return null;
-	}
-}
-
 /** Tavily: POST https://api.tavily.com/search — Bearer auth in the
  *  Authorization header (the current documented scheme; the legacy
  *  api_key-in-body form is retired), query + max_results (0–20) in the
@@ -55,19 +45,14 @@ export function tavilyProvider(apiKey: string, fetchFn: FetchLike = fetch): Sear
 				signal: AbortSignal.timeout(30_000),
 			});
 			if (!resp.ok) throw new Error(`Tavily search API ${resp.status}`);
-			const data = (await resp.json()) as {
-				results?: Array<{ title?: string; url?: string; content?: string }>;
-			};
-			return (data.results ?? [])
-				.flatMap((r) => {
-					const url = safeHttpUrl(r.url);
-					if (!url) return [];
-					return [{
-						title: r.title ?? url,
-						url,
-						snippet: (r.content ?? "").replace(/\n/g, " ").slice(0, 500),
-					}];
-				});
+			const data = await searchJson(resp, "Tavily");
+			const results = (data as { results?: unknown } | null)?.results;
+			if (!Array.isArray(results)) return [];
+			return results.flatMap((result): SearchHit[] => {
+				if (!result || typeof result !== "object") return [];
+				const row = result as { title?: unknown; url?: unknown; content?: unknown };
+				return searchHit(row.title, row.url, row.content);
+			});
 		},
 	};
 }
@@ -91,19 +76,14 @@ export function braveProvider(apiKey: string, fetchFn: FetchLike = fetch): Searc
 				signal: AbortSignal.timeout(30_000),
 			});
 			if (!resp.ok) throw new Error(`Brave search API ${resp.status}`);
-			const data = (await resp.json()) as {
-				web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
-			};
-			return (data.web?.results ?? [])
-				.flatMap((r) => {
-					const hitUrl = safeHttpUrl(r.url);
-					if (!hitUrl) return [];
-					return [{
-						title: r.title ?? hitUrl,
-						url: hitUrl,
-						snippet: (r.description ?? "").replace(/\n/g, " ").slice(0, 500),
-					}];
-				});
+			const data = await searchJson(resp, "Brave");
+			const results = (data as { web?: { results?: unknown } | null } | null)?.web?.results;
+			if (!Array.isArray(results)) return [];
+			return results.flatMap((result): SearchHit[] => {
+				if (!result || typeof result !== "object") return [];
+				const row = result as { title?: unknown; url?: unknown; description?: unknown };
+				return searchHit(row.title, row.url, row.description);
+			});
 		},
 	};
 }
