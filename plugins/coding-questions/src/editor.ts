@@ -6,7 +6,7 @@ import { languages } from "@codemirror/language-data";
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark";
 import type { PluginQuestionAnswerState, PluginQuestionEditorHandle, PluginQuestionEditorProps, PluginProblemEditorHandle, PluginProblemEditorProps } from "learnharness-plugin-api";
 import { isSafeBareExecutable, validateTestProgram } from "./allowlist.ts";
-import { isReady, normalizeLineEndings, type CodingPayload, type CodingQuestionPayload } from "./contract.ts";
+import { isReady, normalizeLineEndings, TEST_RUN_TRUST_NOTICE, type CodingPayload, type CodingQuestionPayload } from "./contract.ts";
 import type { CodingTests } from "./test-result.ts";
 import { supportsSyntaxDiagnostics, syntaxDiagnosticsExtension } from "./diagnostics.ts";
 
@@ -132,6 +132,12 @@ function createTestReviewPanel(
   heading.className = "lh-coding-test-review__title";
   heading.textContent = "Test runner inspection (runs locally after submission)";
   panel.append(heading);
+
+  const trust = doc.createElement("p");
+  trust.className = "lh-coding-test-review__note";
+  trust.setAttribute("data-testid", "coding-test-trust");
+  trust.textContent = TEST_RUN_TRUST_NOTICE;
+  panel.append(trust);
 
   const hasRecipe =
     !!tests &&

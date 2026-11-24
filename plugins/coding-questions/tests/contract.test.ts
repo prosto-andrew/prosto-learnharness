@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { Compile } from "typebox/compile";
 import type { PluginBackendContext, PluginQuestionTypeDefinition } from "learnharness-plugin-api";
 import { activate } from "../src/backend.ts";
-import { definition, instructions, practiceInstructions, problemDefinition, isReady, normalizeLineEndings, readTests } from "../src/contract.ts";
+import { readFileSync } from "node:fs";
+import { definition, instructions, practiceInstructions, problemDefinition, isReady, normalizeLineEndings, readTests, TEST_RUN_TRUST_NOTICE } from "../src/contract.ts";
 import { findLanguage } from "../src/editor.ts";
 
 const question = Compile(definition.questionSchema);
@@ -66,6 +67,15 @@ test("new questions require a literal program/args/code test recipe, without add
   assert.match(instructions, /answer\.txt/);
   assert.match(instructions, /standard input/);
   assert.doesNotMatch(instructions, /version.check.*tool/i);
+});
+
+test("instructions give Windows python guidance and the editor shows an honest no-sandbox notice", () => {
+  assert.match(instructions, /on Windows use python/);
+  assert.match(practiceInstructions, /on Windows use python/);
+  assert.match(TEST_RUN_TRUST_NOTICE, /without a sandbox/);
+  const editor = readFileSync(new URL("../src/editor.ts", import.meta.url), "utf8");
+  assert.ok(editor.includes("TEST_RUN_TRUST_NOTICE"));
+  assert.ok(editor.includes("coding-test-trust"));
 });
 
 test("new questions require a nonblank Markdown model solution, without changing the saved answer schema", () => {
