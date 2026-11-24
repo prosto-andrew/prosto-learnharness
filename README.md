@@ -31,7 +31,7 @@ Instead of just giving you an explanation, it uses your answers and thinking to 
 
 **Think out loud.** The thinking fields let you explain your reasoning, uncertainties, and reactions in your own words. This is how the agent gets a detailed picture rather than just a record of right and wrong answers. You can type or use dictation.
 
-**Bring your files.** In the desktop app, attach PDFs, photos, or any other file with the paperclip, or drag them in. The file stays where it is: the message carries its path, and the agent reads it from there.
+**Bring your files.** In the desktop app, attach PDFs, photos, or any other file with the paperclip, or drag them in. The file stays where it is: the message carries its path, and the agent reads it from there. In this hardened build the agent reads only folders you allow in Settings → Agent → Tools → File access.
 
 The agent can also research questions in the background, create visual explanations, show your own images in the lesson and mark them up with arrows and labels (including figures it crops straight out of your PDFs, such as lecture slides), and build interactive demonstrations.
 
@@ -55,7 +55,7 @@ Choose your models, then start a session with what you want to understand. You c
 
 See [Getting started](docs/getting-started.md) for model setup, dictation, files, and notes imports, and [context, caching, and costs](docs/compaction-accounting.md) for advanced cache preferences.
 
-All three platforms support in-app updates.
+In-app updates are disabled in this hardened build; update by pulling the repository and rebuilding.
 
 ## Your keys, your data
 
