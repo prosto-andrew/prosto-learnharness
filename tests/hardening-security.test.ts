@@ -331,7 +331,7 @@ describe("hardening security regressions", () => {
 		assert.equal(DEFAULT_SUBAGENT_MAX_TURNS, 32);
 		assert.equal(DEFAULT_DEMO_BUILDER_MAX_STEPS, 32);
 		assert.equal(DEFAULT_PDF_READER_MAX_ITERATIONS, 24);
-		assert.equal(DEFAULT_RESEARCHER_MAX_TURNS, 20);
+		assert.equal(DEFAULT_RESEARCHER_MAX_TURNS, 32);
 		assert.equal(DEFAULT_VISUAL_MAKER_MAX_ITERATIONS, 16);
 		assert.equal(DEFAULT_SUBMIT_AGENT_MAX_TURNS, 8);
 		assert.equal(DEFAULT_SUBMIT_AGENT_EXPLORE_MAX_TURNS, 24);

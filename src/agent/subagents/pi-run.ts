@@ -1,4 +1,4 @@
-import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentEvent, type AgentMessage, type AgentTool, type PrepareNextTurnContext } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { APP_IDENTITY, piEngineFor, type PiEngine } from "../models.ts";
@@ -20,6 +20,17 @@ import type { ModelRole } from "../../../config.ts";
  * `signal.aborted` early-return keeps working unchanged.
  */
 
+/** Wind-down for a capped run: one closing request that carries `notice` and
+ *  offers only the `keepTools` tools, so hitting the cap still yields a result. */
+export interface SubagentFinalTurn {
+	/** User-role notice appended before the final request. */
+	notice: string;
+	/** Tool names still offered on the final request; every other tool is withheld. */
+	keepTools: readonly string[];
+}
+
+export const FINAL_TURN_NOTICE = "Turn budget reached: this is your final turn and tools are disabled. Write your final deliverable now from what you already have, and state what you could not finish.";
+
 export interface SubagentRunOptions {
 	/** Named core role for engine resolution and opt-in captures. Optional when
 	 * an explicit engine is supplied; plugin runs do not invent core roles. */
@@ -33,6 +44,9 @@ export interface SubagentRunOptions {
 	prompt?: string;
 	/** Optional assistant-turn cap. Omitted = run until natural completion or a stop rule. */
 	maxTurns?: number;
+	/** When the turn before the cap used tools, the last request carries this
+	 *  notice and only its keepTools. Omitted = the cap simply ends the run. */
+	finalTurn?: SubagentFinalTurn;
 	/** Abort mid-model-call (the real-kill semantics). */
 	abortSignal?: AbortSignal;
 	/** Money channel: one call per model request. */
@@ -80,6 +94,8 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 	const engine = subagentEngine(opts.role, opts.engine);
 	const maxTurns = opts.maxTurns ?? DEFAULT_SUBAGENT_MAX_TURNS;
 	let turns = 0;
+	let finalRequest = false;
+	const finalTurn = opts.finalTurn;
 	// Debug recorder (owner, 2026-10-04): raw provider events per job run.
 	const providerEvents = opts.chatId && opts.role ? providerEventObserver(opts.chatId, `job:${opts.role}`) : undefined;
 	const sessionId = randomUUID();
@@ -104,13 +120,28 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 			await opts.beforeRequest?.();
 		},
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
+		// Final-turn wind-down: tools are declared to the provider by transcript
+		// system messages, so they are narrowed here, before the loop appends
+		// the notice and declares the tool change ahead of the last request.
+		...(finalTurn ? {
+			prepareNextTurnWithContext: (turn: PrepareNextTurnContext) => {
+				if (!finalRequest) return undefined;
+				const keep = new Set(finalTurn.keepTools);
+				return {
+					context: { ...turn.context, tools: (turn.context.tools ?? []).filter((tool) => keep.has(tool.name)) },
+					messages: [{ role: "user" as const, content: finalTurn.notice, timestamp: Date.now() }],
+				};
+			},
+		} : {}),
 		// 0.87.1: shouldStopAfterTurn → finishTurn (same call point; "end"
 		// exits before the steering poll, exactly the old boolean-true).
 		finishTurn: (turn) => {
 			turns++;
-			return turns >= maxTurns || opts.shouldStop?.(turn.message, turn.toolResults) === true
-				? { action: "end" }
-				: undefined;
+			if (turns >= maxTurns || opts.shouldStop?.(turn.message, turn.toolResults) === true) return { action: "end" };
+			// Only a turn that used tools leads to another request; arming the
+			// notice after a tool-free turn would force an extra one.
+			if (finalTurn && turns === maxTurns - 1 && turn.toolResults.length > 0) finalRequest = true;
+			return undefined;
 		},
 	});
 

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Type } from "typebox";
-import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
-import { runSubagent } from "../src/agent/subagents/pi-run.ts";
+import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, getCurrentTools, type FauxResponseStep, type TranscriptContext } from "@earendil-works/pi-ai";
+import { FINAL_TURN_NOTICE, runSubagent } from "../src/agent/subagents/pi-run.ts";
 import { runResearcherAgent } from "../src/agent/subagents/researcher.ts";
 import { runSubmitAgent } from "../src/agent/subagents/submit-agent.ts";
 
@@ -60,14 +60,74 @@ test("default safety ceilings stop runaway background loops without unbounded sp
 	await runSubagent([again], { engine: infiniteSubagent.engine, systemPrompt: "Offline", prompt: "Offline" });
 	assert.equal(infiniteSubagent.faux.state.callCount, 32);
 
-	const infiniteResearch = scripted(Array.from({ length: 30 }, (_, index) => fauxAssistantMessage([
+	const loopTurn = (index: number) => fauxAssistantMessage([
 		fauxToolCall("web_search", { query: `loop_${index}` }, { id: `loop_${index}` }),
-	], { stopReason: "toolUse" })));
+	], { stopReason: "toolUse" });
+	let firstTools: string[] | undefined;
+	let finalTools: string[] | undefined;
+	const infiniteResearch = scripted(Array.from({ length: 40 }, (_, index): FauxResponseStep => index === 0
+		? (context: TranscriptContext) => { firstTools = getCurrentTools(context.messages).map(t => t.name); return loopTurn(index); }
+		: index === 31
+			? (context: TranscriptContext) => { finalTools = getCurrentTools(context.messages).map(t => t.name); return loopTurn(index); }
+			: loopTurn(index)));
 	await runResearcherAgent("Looping question", {
 		engine: infiniteResearch.engine,
 		search: () => ({ id: "tavily", async search() { return []; } }),
 	});
-	assert.equal(infiniteResearch.faux.state.callCount, 20);
+	assert.equal(infiniteResearch.faux.state.callCount, 32);
+	assert.ok(firstTools?.includes("web_search"), "earlier requests still offer the research tools");
+	assert.deepEqual(finalTools, [], "the 32nd request offers no tools");
+});
+
+test("final turn steers a notice and withholds tools, so a capped run still delivers text", async () => {
+	let firstTools: string[] | undefined;
+	let finalTools: string[] | undefined;
+	let finalLast: TranscriptContext["messages"][number] | undefined;
+	const { faux, engine } = scripted([
+		(context) => { firstTools = getCurrentTools(context.messages).map(t => t.name); return toolTurn(0); },
+		toolTurn(1),
+		(context) => {
+			finalTools = getCurrentTools(context.messages).map(t => t.name);
+			finalLast = context.messages.at(-1);
+			return fauxAssistantMessage("Final brief");
+		},
+	]);
+	const result = await runSubagent([again], { engine, systemPrompt: "Offline", prompt: "Offline", maxTurns: 3,
+		finalTurn: { notice: FINAL_TURN_NOTICE, keepTools: [] } });
+	assert.deepEqual(firstTools, ["again"]);
+	assert.deepEqual(finalTools, []);
+	assert.equal(finalLast?.role, "user");
+	assert.equal(finalLast?.content, FINAL_TURN_NOTICE);
+	assert.equal(result.text, "Final brief");
+	assert.equal(faux.state.callCount, 3);
+});
+
+test("a final-turn tool call still ends at the cap without an extra request", async () => {
+	const { faux, engine } = scripted([toolTurn(0), toolTurn(1), toolTurn(2), toolTurn(3)]);
+	await runSubagent([again], { engine, systemPrompt: "Offline", prompt: "Offline", maxTurns: 3,
+		finalTurn: { notice: FINAL_TURN_NOTICE, keepTools: [] } });
+	assert.equal(faux.state.callCount, 3);
+});
+
+test("no notice when the run finishes naturally before the cap", async () => {
+	const { faux, engine } = scripted([fauxAssistantMessage("Done")]);
+	const result = await runSubagent([], { engine, systemPrompt: "Offline", prompt: "Offline", maxTurns: 2,
+		finalTurn: { notice: FINAL_TURN_NOTICE, keepTools: [] } });
+	assert.equal(faux.state.callCount, 1);
+	assert.ok(!result.newMessages.some(m => m.role === "user" && m.content === FINAL_TURN_NOTICE));
+});
+
+test("keepTools keeps only the named tools on the final request", async () => {
+	const submitResult = { ...again, name: "submit_result", label: "submit_result" };
+	let finalTools: string[] | undefined;
+	const { faux, engine } = scripted([toolTurn(0), (context) => {
+		finalTools = getCurrentTools(context.messages).map(t => t.name);
+		return fauxAssistantMessage("Done");
+	}]);
+	await runSubagent([again, submitResult], { engine, systemPrompt: "Offline", prompt: "Offline", maxTurns: 2,
+		finalTurn: { notice: FINAL_TURN_NOTICE, keepTools: ["submit_result"] } });
+	assert.deepEqual(finalTools, ["submit_result"]);
+	assert.equal(faux.state.callCount, 2);
 });
 
 for (const role of ["extractor", "auditor"] as const) test(`${role} can correct/explore beyond its former cap and stops on accepted submission`, async () => {

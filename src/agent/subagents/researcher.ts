@@ -4,7 +4,7 @@ import { createWebTools } from "../tools/web.ts";
 import { createPdfReadTools } from "../tools/pdf-read.ts";
 import type { SearchProvider } from "../../core/search.ts";
 import type { PiEngine } from "../models.ts";
-import { runSubagent } from "./pi-run.ts";
+import { FINAL_TURN_NOTICE, runSubagent } from "./pi-run.ts";
 
 /**
  * The researcher sub-agent (vision §2.5): a SEPARATE ToolLoopAgent instance
@@ -67,11 +67,11 @@ Numbered findings with inline source citations:
 ## Gaps
 What couldn't be answered. Suggested next steps.`;
 
-export const DEFAULT_RESEARCHER_MAX_TURNS = 20;
+export const DEFAULT_RESEARCHER_MAX_TURNS = 32;
 
 export interface ResearcherRunOptions {
 	engine?: PiEngine;
-	/** Optional assistant-turn cap; defaults to DEFAULT_RESEARCHER_MAX_TURNS (20). */
+	/** Optional assistant-turn cap; defaults to DEFAULT_RESEARCHER_MAX_TURNS (32). */
 	maxTurns?: number;
 	/** The search seam (search port wave, 2026-09-20): resolves the LIVE
 	 *  provider per call, null = honestly unavailable (the web_search tool
@@ -104,6 +104,7 @@ export async function runResearcherAgent(prompt: string, opts: ResearcherRunOpti
 		engine: opts.engine,
 		systemPrompt: INSTRUCTIONS,
 		maxTurns: opts.maxTurns ?? DEFAULT_RESEARCHER_MAX_TURNS,
+		finalTurn: { notice: FINAL_TURN_NOTICE, keepTools: [] },
 		abortSignal: opts.abortSignal,
 		onUsage: opts.onUsage,
 		onToolStart: opts.onToolStart,
