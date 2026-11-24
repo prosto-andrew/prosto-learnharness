@@ -420,7 +420,7 @@ describe("hardening security regressions", () => {
 		assert.equal(defaults.env.LH_AUTH_FILE, path.join(fakeRoot, "auth.json"));
 
 		const custom = resolveStandaloneLaunch({
-			HOSTNAME: "127.0.0.1",
+			LH_HOST: "127.0.0.1",
 			PORT: "4123",
 			LH_DATA_DIR: "./custom-data",
 			LH_AUTH_FILE: "./custom-auth.json",
@@ -429,5 +429,12 @@ describe("hardening security regressions", () => {
 		assert.equal(custom.env.PORT, "4123");
 		assert.equal(custom.env.LH_DATA_DIR, path.resolve("./custom-data"));
 		assert.equal(custom.env.LH_AUTH_FILE, path.resolve("./custom-auth.json"));
+
+		assert.equal(resolveStandaloneLaunch({ HOSTNAME: "my-laptop" }, fakeRoot).env.HOSTNAME, "localhost");
+		assert.equal(resolveStandaloneLaunch({ LH_HOST: " LOCALHOST " }, fakeRoot).env.HOSTNAME, "localhost");
+		assert.equal(resolveStandaloneLaunch({ LH_HOST: "[::1]" }, fakeRoot).env.HOSTNAME, "::1");
+		for (const bad of ["0.0.0.0", "192.168.1.10", "my-laptop", "::"]) {
+			assert.throws(() => resolveStandaloneLaunch({ LH_HOST: bad }, fakeRoot), /LH_HOST must be a loopback address/);
+		}
 	});
 });

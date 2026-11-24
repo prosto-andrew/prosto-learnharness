@@ -1,10 +1,11 @@
 /**
  * start-standalone.mjs — run Next.js's standalone server safely in web mode.
  *
- * Avoids the `next start` warning under `output: "standalone"` while keeping
- * loopback-only binding (`HOSTNAME=localhost` by default, never `0.0.0.0`)
- * and pinning `LH_DATA_DIR` / `LH_AUTH_FILE` to the repository root (since
- * standalone `server.js` chdirs into `.next/standalone`).
+ * Avoids the `next start` warning under `output: "standalone"` and pins
+ * `LH_DATA_DIR` / `LH_AUTH_FILE` to the repository root (since standalone
+ * `server.js` chdirs into `.next/standalone`).
+ * Binds only to a loopback address taken from LH_HOST (default localhost);
+ * an inherited HOSTNAME is ignored.
  */
 import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -20,13 +21,29 @@ const REQUIRED_CURATED_ASSETS = [
 	path.join("public", "plugin-loader.js"),
 ];
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/**
+ * @param {string | undefined} raw
+ * @returns {string}
+ */
+export function standaloneHost(raw) {
+	let host = (raw ?? "").trim().toLowerCase();
+	if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+	if (!host) return "localhost";
+	if (!LOOPBACK_HOSTS.has(host)) {
+		throw new Error(`LH_HOST must be a loopback address (localhost, 127.0.0.1 or ::1); got "${raw}".`);
+	}
+	return host;
+}
+
 /**
  * @param {Record<string, string | undefined>} [env]
  * @param {string} [root]
  */
 export function resolveStandaloneLaunch(env = process.env, root = ROOT) {
 	const standalone = path.join(root, ".next", "standalone");
-	const hostname = env.HOSTNAME?.trim() || "localhost";
+	const hostname = standaloneHost(env.LH_HOST);
 	const port = env.PORT?.trim() || "3000";
 	const dataDir = env.LH_DATA_DIR?.trim() ? path.resolve(env.LH_DATA_DIR.trim()) : path.join(root, "data");
 	const authFile = env.LH_AUTH_FILE?.trim() ? path.resolve(env.LH_AUTH_FILE.trim()) : path.join(root, "auth.json");
@@ -50,7 +67,13 @@ export function missingCuratedAssets(standalone) {
 }
 
 function main() {
-	const launch = resolveStandaloneLaunch(process.env, ROOT);
+	let launch;
+	try {
+		launch = resolveStandaloneLaunch(process.env, ROOT);
+	} catch (error) {
+		console.error("[start-standalone] " + (error instanceof Error ? error.message : String(error)));
+		process.exit(1);
+	}
 	if (!fs.existsSync(launch.server)) {
 		console.error('[start-standalone] .next/standalone/server.js missing — run "npm run build" first.');
 		process.exit(1);
