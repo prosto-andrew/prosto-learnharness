@@ -255,6 +255,13 @@ describe("hardening security regressions", () => {
 		}
 	});
 
+	it("visual-maker instructions state the static-SVG rules the validator enforces", async () => {
+		const { VISUAL_MAKER_INSTRUCTIONS } = await import("../src/agent/subagents/visual-maker.ts");
+		assert.ok(VISUAL_MAKER_INSTRUCTIONS.includes("no <style> blocks"));
+		assert.ok(VISUAL_MAKER_INSTRUCTIONS.includes("never inside style"));
+		assert.ok(!VISUAL_MAKER_INSTRUCTIONS.includes("or style)"));
+	});
+
 	it("plugin-transport serves SVG plugin assets with Content-Security-Policy: sandbox", async () => {
 		const transport = createPluginTransport({
 			directory: "/tmp/plugins",
