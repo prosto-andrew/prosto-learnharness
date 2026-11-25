@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { normalizeContext } from "@earendil-works/pi-ai";
+import { hasApi, normalizeContext } from "@earendil-works/pi-ai";
+import { resolveGoogleThinkingLevel } from "@earendil-works/pi-ai/api/google-shared";
 import { AUTH_PROVIDER_ENV_VARS } from "../src/core/auth-keys.ts";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "lh-manual-catalog-"));
@@ -38,14 +39,14 @@ const xai = {
 	inputLimits: { maxRequestBytes: 20_000_000, images: { maxPerRequest: 10, resize: { maxWidth: 1600, maxHeight: 1700, maxBytes: 2_000_000, jpegQuality: 85 } } },
 };
 
-function startupModels(snapshotPath: string) {
+function startupModels(snapshotPath: string, rows: readonly { provider: string; id: string }[] = [row, baseten, xai]) {
 	const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
 		let fetches = 0;
 		globalThis.fetch = () => { fetches++; throw new Error("startup must not fetch"); };
 		const { initializeModelCatalog } = await import("./src/server/remote-model-catalog.ts");
 		const { piModels } = await import("./src/agent/models.ts");
 		initializeModelCatalog();
-		const coordinates = ${JSON.stringify([row, baseten, xai].map(({ provider, id }) => [provider, id]))};
+		const coordinates = ${JSON.stringify(rows.map(({ provider, id }) => [provider, id]))};
 		const models = coordinates.map(([provider, id]) => piModels().getModel(provider, id));
 		if (fetches) throw new Error("startup attempted to fetch");
 		console.log(JSON.stringify(models));
@@ -205,4 +206,41 @@ test("wire behavior survives validated refresh and offline restore; mixed shard 
 
 	fs.writeFileSync(snapshot, "invalid json");
 	assert.deepEqual(startupModels(scratch), [null, null, null]);
+});
+
+test("Google rows offer only thinking levels Pi 1.5.2's Google transport can send", async (t) => {
+	for (const key of AUTH_PROVIDER_ENV_VARS) delete process.env[key];
+	process.env.GEMINI_API_KEY = "synthetic-gemini-key";
+	// pi.dev's google/gemini-4-neon shape (2026-11-25), written for Pi 1.6.1:
+	// Pi 1.5.2's Google transport throws on "xhigh" but lowercases "HIGH".
+	// "constructor" passes the row schema but is no Google level (prototype key).
+	const gemini = {
+		...row, id: "test-gemini-xhigh", provider: "google", api: "google-generative-ai",
+		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+		thinkingLevelMap: { off: null, minimal: "constructor", low: "low", medium: "medium", high: "HIGH", xhigh: "xhigh", max: null },
+	};
+	t.mock.method(globalThis, "fetch", async (url: URL) => {
+		assert.equal(url.href, "https://pi.dev/api/models/providers/google?types=chat");
+		return Response.json([gemini]);
+	});
+	assert.equal(await refreshModelCatalog(), "updated");
+	const entry = modelCatalog().models.find((model) => model.provider === "google" && model.id === gemini.id);
+	assert.deepEqual(entry?.supportedLevels, ["low", "medium", "high"]);
+	// A slot or chat that already pinned xhigh runs at the nearest sendable level.
+	const engine = piEngineForSpec({ provider: "google", id: gemini.id, thinkingLevel: "xhigh" });
+	assert.equal(engine.level, "high");
+	const model = engine.model;
+	assert.ok(hasApi(model, "google-generative-ai"));
+	for (const level of entry!.supportedLevels) {
+		if (level !== "off") assert.doesNotThrow(() => resolveGoogleThinkingLevel(model, level));
+	}
+
+	// A snapshot saved before this check is re-validated on startup; other
+	// transports send the mapped value verbatim, so theirs stays as fed.
+	const openai = { ...row, id: "test-openai-xhigh", thinkingLevelMap: { ...row.thinkingLevelMap, xhigh: "xhigh" } };
+	const legacy = fs.mkdtempSync(path.join(scratch, "legacy-"));
+	fs.writeFileSync(path.join(legacy, "model-catalog.json"), JSON.stringify({ version: 1, providers: { google: [gemini], openai: [openai] } }));
+	const [restoredGemini, restoredOpenAI] = startupModels(legacy, [gemini, openai]);
+	assert.deepEqual(restoredGemini.thinkingLevelMap, { off: null, minimal: null, low: "low", medium: "medium", high: "HIGH", xhigh: null, max: null });
+	assert.deepEqual(restoredOpenAI.thinkingLevelMap, { minimal: null, high: "high", xhigh: "xhigh" });
 });

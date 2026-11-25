@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { hasApi, type Api, type Model } from "@earendil-works/pi-ai";
+import { hasApi, type Api, type Model, type ResolvedGoogleThinkingLevel } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { PATHS } from "../../config.ts";
 import { setModelCatalogOverlay } from "../agent/models.ts";
@@ -58,6 +58,13 @@ const rowSchema = z.object({
 	contextWindow: tokens,
 	maxTokens: tokens,
 });
+
+// Pi 1.5.2's Google transports send a mapped thinking level only as one of
+// these (case-insensitively) and throw on anything else at request time, e.g.
+// pi.dev's "xhigh", written for a newer Pi. Such a level is dropped (null), so
+// pickers stop offering it and pinned levels clamp to the nearest sendable one.
+// Typed against Pi: an upgrade that widens Google's levels fails typecheck here.
+const googleThinkingLevels = { minimal: true, low: true, medium: true, high: true } satisfies Record<Exclude<ResolvedGoogleThinkingLevel, "off">, true>;
 
 // Pi 1.5.2 wire flags, per transport. Unknown behavior fails closed; the
 // descriptors below are bounded values, never arbitrary request arguments.
@@ -155,6 +162,13 @@ function checkedModels(provider: string, rows: readonly unknown[]): Model<Api>[]
 		const { id, api: _api, baseUrl: _baseUrl, ...metadata } = rowSchema.parse(row);
 		if ((row.provider !== undefined && row.provider !== provider) || models.has(id) || (route.api === "google-generative-ai" && id.includes(":"))) {
 			throw new Error("Invalid pi.dev model identity");
+		}
+		const thinkingLevelMap = metadata.thinkingLevelMap;
+		if (thinkingLevelMap && (route.api === "google-generative-ai" || route.api === "google-vertex")) {
+			for (const level of ["minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+				const mapped = thinkingLevelMap[level];
+				if (typeof mapped === "string" && !Object.hasOwn(googleThinkingLevels, mapped.toLowerCase())) thinkingLevelMap[level] = null;
+			}
 		}
 		// Model.samplingParams and its per-level variant allow arbitrary
 		// request keys in Pi. Do not silently import models that require them.
