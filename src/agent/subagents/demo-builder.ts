@@ -53,6 +53,7 @@ that runs it. You never see the lesson; the brief is everything you know.
 Runtime contract (the document runs in a sandboxed offline iframe, sandbox="allow-scripts", strict CSP connect-src 'none'):
 - Single file, strictly offline and self-contained. Vanilla JS + Canvas 2D or SVG only — NO CDN imports or network requests.
 - NO localStorage, sessionStorage, or document.cookie — the sandbox makes them throw.
+- NO eval or new Function — the CSP blocks them; parse any user-typed expression yourself.
 - The parent sizes the iframe to the document height automatically; just build normal flowing layout.
   Make the demo fill the width and size its own height sensibly.
 
@@ -182,6 +183,10 @@ function failureSummary(result: DemoRunResult | null): string {
 
 export const DEFAULT_DEMO_BUILDER_MAX_STEPS = 32;
 
+/** The builder's deliverable is the last write_demo (verified after the loop),
+ *  so its capped final turn keeps write_demo and asks for notes, not output. */
+export const DEMO_FINAL_TURN_NOTICE = "Turn budget reached: this is your final turn and only write_demo remains. If your last run_demo reported problems, call write_demo once with the fixed document; it will be verified automatically. Otherwise finish with your 1-3 sentence notes for the teacher.";
+
 export async function runDemoBuilder(input: DemoBuilderInput, opts: DemoBuilderOptions = {}): Promise<DemoResult> {
 	const headless = opts.headless ?? getHeadless();
 	const title = input.title.trim() || "Interactive demo";
@@ -211,6 +216,7 @@ export async function runDemoBuilder(input: DemoBuilderInput, opts: DemoBuilderO
 			systemPrompt: INSTRUCTIONS,
 			prompt,
 			maxTurns: opts.maxSteps ?? DEFAULT_DEMO_BUILDER_MAX_STEPS,
+			finalTurn: { notice: DEMO_FINAL_TURN_NOTICE, keepTools: ["write_demo"] },
 			abortSignal: opts.abortSignal,
 			onUsage: (usage) => opts.onUsage?.(usage),
 			onToolStart: (toolName) => opts.onActivity?.(toolName),

@@ -632,7 +632,7 @@ persists acceptance synchronously and returns a snapshot, **not completion**.
 `options` use the inference allowlist; `timeoutMs` is wall-clock lifetime including
 admission waits, distinct from per-request `options.timeoutMs`. Model/purpose are
 explicit. Optional `maxTurns` limits assistant turns, including correction turns;
-omitting it means no turn-count limit. An explicit limit must be a positive safe
+omitting it applies a safety ceiling of 16 turns in this hardened build, and the final turn offers only submit_result. An explicit limit must be a positive safe
 integer and remains enforced. An identical request ID/request returns the original
 task, while conflicting reuse errors. Retry with a new ID for a new attempt.
 

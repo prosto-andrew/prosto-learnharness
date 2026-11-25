@@ -269,7 +269,6 @@ export function Chat({
 	title,
 	initialMessages,
 	initialError,
-	initialPrompt,
 	initiallyInFlight,
 	initiallyCompacting = false,
 	initialConfigured = false,
@@ -284,7 +283,6 @@ export function Chat({
 	 *  renders no phase chip (no probe→teach arc applies) and a Practice
 	 *  tag rides the header instead. */
 	kind?: "teach" | "practice";
-	initialPrompt?: string;
 	/** A teacher turn is running server-side but attached to no client
 	 * (navigated away mid-turn, returned while in flight). */
 	initiallyInFlight?: boolean;
@@ -877,7 +875,7 @@ export function Chat({
 				deliverOpeningPrompt(prompt!);
 			},
 		);
-	}, [chatId, initialPrompt, initialMessages, initiallyInFlight, surfaceTarget, deliverOpeningPrompt, applyText]);
+	}, [chatId, initialMessages, initiallyInFlight, surfaceTarget, deliverOpeningPrompt, applyText]);
 
 	useEffect(() => {
 		if (!hasConfirmedConversation) return;
@@ -2302,7 +2300,7 @@ export function Chat({
 export type EscAbortTarget = "side-thread" | "mermaid" | "plan" | "setup" | "question" | "problem" | "turn" | null;
 	/**
  * Does the opening topic still owe its first send? The topic is the
- * server's ?prompt= or the sessionStorage stash. The gate is "no real
+ * sessionStorage stash. The gate is "no real
  * conversation yet" (no user/assistant message) — NOT emptiness: a
  * session started with map picks carries a graph-context MARKER as
  * message[0], and that scaffolding must never swallow the first send

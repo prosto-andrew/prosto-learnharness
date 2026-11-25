@@ -3,10 +3,10 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import type { AssistantMessage, JsonObject, ToolCall, TranscriptContext } from "@earendil-works/pi-ai";
+import { getCurrentTools, type AssistantMessage, type JsonObject, type ToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { Type } from "typebox";
-import { createPluginWorkerService, type PluginWorkerServiceDeps } from "../src/agent/plugin-workers.ts";
+import { createPluginWorkerService, FINAL_TURN_SUBMIT_NOTICE, type PluginWorkerServiceDeps } from "../src/agent/plugin-workers.ts";
 import { createPluginTaskRecordStore } from "../src/store/plugin-task-records.ts";
 import { runSubagent } from "../src/agent/subagents/pi-run.ts";
 import { markUnadmittedUsage } from "../src/agent/subscription-request-cycle.ts";
@@ -178,6 +178,26 @@ test("omitted maxTurns enforces default safety ceiling (16), while explicit maxT
 	assert.deepEqual(await f2.service.wait(explicit.id), { id: explicit.id, status: "succeeded", result: "accepted" });
 	await tick();
 	assert.equal(f2.calls.length, 21, "no call follows an accepted submission");
+});
+
+test("the default ceiling's final turn offers only submit_result and can still succeed", async t => {
+	let firstTools: string[] | undefined;
+	let finalTools: string[] | undefined;
+	const f = fixture(t, (context, index) => {
+		if (index === 0) firstTools = getCurrentTools(context.messages).map(tool => tool.name);
+		if (index < 15) return message([call("probe", {}, `probe_${index}`)]);
+		finalTools = getCurrentTools(context.messages).map(tool => tool.name);
+		return message([submit("accepted", "final_submit")]);
+	});
+	f.register({ tools: () => [{ name: "probe", label: "probe", description: "Offline probe", parameters: Type.Object({}),
+		execute: async () => ({ content: [{ type: "text" as const, text: "keep probing" }], details: null }) }] });
+	const started = f.service.start("worker", options());
+	assert.deepEqual(await f.service.wait(started.id), { id: started.id, status: "succeeded", result: "accepted" });
+	await tick();
+	assert.deepEqual(firstTools, ["probe", "submit_result"]);
+	assert.deepEqual(finalTools, ["submit_result"]);
+	assert.equal(f.calls[15]?.messages.at(-1)?.content, FINAL_TURN_SUBMIT_NOTICE);
+	assert.equal(f.calls.length, 16);
 });
 
 test("cancel fences async validation; waiter abort and unsubscription do not cancel the task", async t => {

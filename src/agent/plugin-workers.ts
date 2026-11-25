@@ -81,6 +81,8 @@ interface Task {
 /** Default safety ceiling when a plugin worker omits maxTurns (Cost-DoS guard). */
 export const DEFAULT_PLUGIN_WORKER_MAX_TURNS = 16;
 
+export const FINAL_TURN_SUBMIT_NOTICE = "Turn budget reached: this is your final turn. Call submit_result now with the best result you have; other tools are disabled.";
+
 /** Standalone result tasks. One service/writer per directory; no admission pool,
  * replay, DAG, transport, or dependence on a subscribed view. */
 export function createPluginWorkerService(deps: PluginWorkerServiceDeps): PluginWorkerService {
@@ -203,7 +205,8 @@ export function createPluginWorkerService(deps: PluginWorkerServiceDeps): Plugin
 				commit(t, { ...t.record, messages });
 			};
 			const effectiveMaxTurns = t.record.maxTurns ?? DEFAULT_PLUGIN_WORKER_MAX_TURNS;
-			await runSubagent(tools, { engine, systemPrompt: d.instructions, messages: clone(t.record.messages), maxTurns: effectiveMaxTurns, abortSignal: t.controller.signal,
+			await runSubagent(tools, { engine, systemPrompt: d.instructions, messages: clone(t.record.messages), maxTurns: effectiveMaxTurns,
+				finalTurn: { notice: FINAL_TURN_SUBMIT_NOTICE, keepTools: ["submit_result"] }, abortSignal: t.controller.signal,
 				beforeRequest: active, shouldStop: () => terminal(t.record),
 				onEvent: (event: AgentEvent) => {
 					if (disposed || t.closed || t.poisoned || t.controller.signal.aborted) throw t.poisoned ?? new Error("Task writer is closed");

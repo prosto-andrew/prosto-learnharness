@@ -776,7 +776,7 @@ purpose: PluginCallPurpose;
 
 ### PluginWorkerStartOptions maxTurns
 
-Optional maximum assistant turns, including corrections. Omitted = unbounded.
+Optional maximum assistant turns, including corrections. Omitted = 16 (safety ceiling in this hardened build); the final turn offers only submit_result.
 
 ```ts
 maxTurns?: number;

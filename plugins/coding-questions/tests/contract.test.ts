@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { Compile } from "typebox/compile";
 import type { PluginBackendContext, PluginQuestionTypeDefinition } from "learnharness-plugin-api";
 import { activate } from "../src/backend.ts";
-import { definition, instructions, practiceInstructions, problemDefinition, isReady, normalizeLineEndings, readTests } from "../src/contract.ts";
+import { readFileSync } from "node:fs";
+import { definition, instructions, practiceInstructions, problemDefinition, isReady, normalizeLineEndings, readTests, TEST_RUN_TRUST_NOTICE } from "../src/contract.ts";
 import { findLanguage } from "../src/editor.ts";
 
 const question = Compile(definition.questionSchema);
@@ -68,6 +69,15 @@ test("new questions require a literal program/args/code test recipe, without add
   assert.doesNotMatch(instructions, /version.check.*tool/i);
 });
 
+test("instructions give Windows python guidance and the editor shows an honest no-sandbox notice", () => {
+  assert.match(instructions, /on Windows use python/);
+  assert.match(practiceInstructions, /on Windows use python/);
+  assert.match(TEST_RUN_TRUST_NOTICE, /without a sandbox/);
+  const editor = readFileSync(new URL("../src/editor.ts", import.meta.url), "utf8");
+  assert.ok(editor.includes("TEST_RUN_TRUST_NOTICE"));
+  assert.ok(editor.includes("coding-test-trust"));
+});
+
 test("new questions require a nonblank Markdown model solution, without changing the saved answer schema", () => {
   assert.equal(question.Check({ language: "Python", tests, modelSolution }), true);
   for (const value of [undefined, null, "", " \t\n", false, 42, {}, []]) {
@@ -121,6 +131,9 @@ test("validateQuestion and validateProblem enforce bare allowlisted programs and
     assert.ok(Array.isArray(qErr) && qErr.length === 1, program);
     assert.ok(Array.isArray(pErr) && pErr.length === 1, program);
   }
+  const denoErr = definition.validateQuestion!({ input: { ...baseInput, payload: { ...baseInput.payload, tests: { ...tests, program: "deno" } } } } as never);
+  assert.ok(Array.isArray(denoErr) && denoErr.length === 1, "deno");
+  assert.match(denoErr[0]!, /allowlist/);
   const prev = process.env.LH_CODING_ALLOWED_PROGRAMS;
   try {
     process.env.LH_CODING_ALLOWED_PROGRAMS = "bash, custom-runner";

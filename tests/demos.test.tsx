@@ -30,7 +30,7 @@ import * as path from "node:path";
 import { after, describe, it } from "node:test";
 import { createCanvas } from "@napi-rs/canvas";
 import { Value } from "typebox/value";
-import { createFauxCore, fauxAssistantMessage, fauxToolCall, type FauxResponseStep, type ToolCall } from "@earendil-works/pi-ai";
+import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, getCurrentTools, type FauxResponseStep, type ToolCall } from "@earendil-works/pi-ai";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PATHS } from "../config.ts";
 import {
@@ -50,7 +50,7 @@ import { JobCard, PdfJobCard } from "../components/artifacts/job-card.tsx";
 import { ToolCallCard } from "../components/artifacts/tool-call-card.tsx";
 import { JobsContext } from "../components/jobs-context.ts";
 import { demoInputSchema, jobTools, pdfInputSchema, visualInputSchema } from "../src/agent/tools/jobs.ts";
-import { runDemoBuilder } from "../src/agent/subagents/demo-builder.ts";
+import { DEMO_FINAL_TURN_NOTICE, runDemoBuilder } from "../src/agent/subagents/demo-builder.ts";
 import { headlessOverride, realHeadless, type DemoRunResult, type HeadlessApi } from "../src/agent/subagents/headless.ts";
 import { createJobRunner, demoModelOverride, visualModelOverride } from "../src/agent/subagents/runner.ts";
 import { runVisualMaker } from "../src/agent/subagents/visual-maker.ts";
@@ -641,6 +641,28 @@ describe("demo builder (fake model + fake headless)", () => {
 		assert.equal(headless.demoRuns.length, 2, "ran the broken demo, then the fixed one — no extra verification needed");
 		assert.ok(activities.some((a) => a.startsWith("run_demo: 1 console error")), `activity recorded per iteration: ${activities.join(" | ")}`);
 		assert.ok(activities.includes("run_demo: clean"), "clean run recorded in activity");
+	});
+
+	it("the capped final turn keeps only write_demo, so a last fix is still verified and delivered", async () => {
+		const headless = fakeHeadless({ brokenWhenIncludes: "BROKEN" });
+		let finalTools: string[] | undefined;
+		let finalLast: unknown;
+		const faux = createFauxCore({ tokenSize: { min: 64, max: 64 } });
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("write_demo", { html: BROKEN_HTML }, { id: "w1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("run_demo", {}, { id: "r1" })], { stopReason: "toolUse" }),
+			(context) => {
+				finalTools = getCurrentTools(context.messages).map((t) => t.name);
+				finalLast = context.messages.at(-1)?.content;
+				return fauxAssistantMessage([fauxText("Fixed the undefined call."), fauxToolCall("write_demo", { html: GOOD_HTML }, { id: "w2" })], { stopReason: "toolUse" });
+			},
+		]);
+		const result = await runDemoBuilder({ title: "T", brief: "b" }, { engine: { model: faux.getModel(), streamFn: faux.streamSimple }, headless, maxSteps: 3 });
+		assert.deepEqual(finalTools, ["write_demo"]);
+		assert.equal(finalLast, DEMO_FINAL_TURN_NOTICE);
+		assert.equal(faux.state.callCount, 3);
+		assert.equal(result.html, GOOD_HTML, "the final-turn fix is verified and delivered");
+		assert.deepEqual(headless.demoRuns, [BROKEN_HTML, GOOD_HTML]);
 	});
 
 	it("verifies headlessly even when the model forgets run_demo before finishing", async () => {

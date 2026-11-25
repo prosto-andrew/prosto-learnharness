@@ -77,7 +77,7 @@ export interface VisualMakerOptions {
 	chatId?: string;
 }
 
-const INSTRUCTIONS = `You are a visual maker — a diagram author + renderer for precise, spatial figures. You
+export const VISUAL_MAKER_INSTRUCTIONS = `You are a visual maker — a diagram author + renderer for precise, spatial figures. You
 receive a brief describing ONE idea that needs exact placement (coordinate geometry, number lines,
 vectors, function plots, physical layouts — things auto-layout diagrams cannot express), and you return
 ONE clean, correct SVG. You never see the lesson; the brief is everything you know.
@@ -110,7 +110,9 @@ until correct and clean. Never finish without having looked at a render of your 
 
 SVG requirements:
 - A complete <svg> with explicit width/height AND a matching viewBox.
-- White background (<rect> or style), dark strokes, sans-serif labels at generous sizes.
+- White background as a full-size <rect>, dark strokes, sans-serif labels at generous sizes.
+- Use static SVG primitives and inline presentation attributes only: no <style> blocks, <image>, scripts,
+  animation, or foreignObject; url(#id) only as a whole attribute value (fill="url(#g)"), never inside style.
 - One idea, fewest elements — sparse and large beats busy and tiny.
 - Draw only what the brief specifies; never invent data, values, or shapes to fill space.
 - Plain, clean styling: at most one accent color. An explanatory diagram, not art.
@@ -226,10 +228,10 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	/** The picture being annotated; in PDF mode crop_page replaces it. */
 	let learnerImage: LearnerImage | PdfFigureImage | undefined = input.image ?? pdf?.pageImage;
 	const systemPrompt = pdf
-		? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}\n\n${PDF_INSTRUCTIONS}`
+		? `${VISUAL_MAKER_INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}\n\n${PDF_INSTRUCTIONS}`
 		: learnerImage
-			? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}`
-			: INSTRUCTIONS;
+			? `${VISUAL_MAKER_INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}`
+			: VISUAL_MAKER_INSTRUCTIONS;
 	const prompt = [
 		pdf
 			? "Brief for ONE annotated figure from the learner's PDF (from the teacher, verbatim — it is everything you know):"

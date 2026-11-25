@@ -6,9 +6,26 @@ import type { CodingTestResult, CodingTests } from "./test-result.ts";
 
 const TIMEOUT_MS = 30_000;
 const OUTPUT_LIMIT = 64 * 1024;
-const SAFE_ENV_KEYS = ["PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "LANG", "LC_ALL", "TZ", "TERM"] as const;
+const SAFE_ENV_KEYS = [
+  "PATH", "Path", "PATHEXT", "SystemRoot", "WINDIR", "LANG", "LC_ALL", "TZ", "TERM",
+  "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "RUSTUP_HOME", "CARGO_HOME", "PYENV_ROOT",
+] as const;
 
-/** Minimal allowlisted environment isolated to the ephemeral attempt workspace. */
+export const WINDOWS_PROGRAM_NOT_FOUND = "Test program was not found (Windows exit code 9009). On Windows use python instead of python3, or install the runtime.";
+
+/** Map a test process exit code to a result status. Windows reports a missing
+ *  program (including the Microsoft Store python3 alias) as exit code 9009. */
+export function classifyExit(
+  exitCode: number,
+  platform: NodeJS.Platform = process.platform,
+): { status: "passed" | "failed" | "error"; message?: string } {
+  if (exitCode === 0) return { status: "passed" };
+  if (exitCode === 9009 && platform === "win32") return { status: "error", message: WINDOWS_PROGRAM_NOT_FOUND };
+  return { status: "failed" };
+}
+
+/** Minimal allowlisted environment: the user's home stays visible so
+ *  toolchains find their installs; temp dirs point at the attempt workspace. */
 export function buildTestEnv(
   workspace: string,
   sourceEnv: Record<string, string | undefined> = process.env,
@@ -17,8 +34,6 @@ export function buildTestEnv(
   for (const key of SAFE_ENV_KEYS) {
     if (sourceEnv[key] !== undefined) env[key] = sourceEnv[key];
   }
-  env.HOME = workspace;
-  env.USERPROFILE = workspace;
   env.TMP = workspace;
   env.TEMP = workspace;
   env.TMPDIR = workspace;
@@ -144,7 +159,10 @@ async function observeProcess(
           else if (launchError) resolve(result("error", null, `Could not launch test process: ${launchError.message}`));
           else if (exitSignal !== null) resolve(result("error", exitCode, `Test process terminated by signal ${exitSignal}`));
           else if (exitCode === null) resolve(result("error", null, "Test process exited without an exit code"));
-          else resolve(result(exitCode === 0 ? "passed" : "failed", exitCode));
+          else {
+            const outcome = classifyExit(exitCode);
+            resolve(result(outcome.status, exitCode, outcome.message));
+          }
         } catch (error) { reject(error); }
         finally { signal?.removeEventListener("abort", onAbort); }
       })();

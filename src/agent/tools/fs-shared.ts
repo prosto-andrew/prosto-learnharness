@@ -92,6 +92,9 @@ const SENSITIVE_HOME_PATHS = [
 	".bash_history",
 	".zsh_history",
 	".local/share/keyrings",
+	"AppData/Roaming/GitHub CLI",
+	"AppData/Roaming/gcloud",
+	"AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine",
 ];
 
 /** Templates are deliberately included: their names do not guarantee safe contents. */
@@ -116,7 +119,7 @@ function isCredentialTemp(absolute: string, directory: string, authBasename: str
 
 /** String-only check, also usable with synthetic home/credential locations.
  *  The runtime guard below additionally resolves both sources and protected roots.
- *  Only credentials are app-private denials: learning data remains readable. */
+ *  Credentials and the whole app data directory (PATHS.data) are app-private denials. */
 export function isSensitivePath(
 	absolute: string,
 	home: string = os.homedir(),

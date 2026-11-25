@@ -152,6 +152,19 @@ describe("tavilyProvider (wire shape per docs.tavily.com, verified 2026-09-20)",
 			return true;
 		});
 	});
+
+	it("maps a non-string content to an empty snippet instead of throwing", async () => {
+		const provider = tavilyProvider("tvly-throwaway-key-00001", stubFetch(
+			{ results: [{ title: "Example", url: "https://example.com/a", content: 42 }] },
+			() => {},
+		));
+		assert.deepEqual(await provider.search("q", 5), [{ title: "Example", url: "https://example.com/a", snippet: "" }]);
+	});
+
+	it("rejects a non-JSON body without echoing it", async () => {
+		const provider = tavilyProvider("tvly-throwaway-key-00001", async () => new Response("not json", { status: 200 }));
+		await assert.rejects(provider.search("q", 5), /Tavily search API returned an invalid response/);
+	});
 });
 
 describe("braveProvider (wire shape per Brave's dashboard docs, verified 2026-09-20)", () => {
@@ -183,6 +196,11 @@ describe("braveProvider (wire shape per Brave's dashboard docs, verified 2026-09
 			new Response("rate limited", { status: 429 }),
 		);
 		await assert.rejects(provider.search("q", 5), /Brave search API 429/);
+	});
+
+	it("rejects a non-JSON body without echoing it", async () => {
+		const provider = braveProvider("brave-throwaway-key-00001", async () => new Response("not json", { status: 200 }));
+		await assert.rejects(provider.search("q", 5), /Brave search API returned an invalid response/);
 	});
 });
 

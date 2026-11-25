@@ -31,7 +31,7 @@ export interface PluginWorkerStartOptions {
 	prompt: string;
 	model: PluginModelSpec;
 	purpose: PluginCallPurpose;
-	/** Optional maximum assistant turns, including corrections. Omitted = unbounded. */
+	/** Optional maximum assistant turns, including corrections. Omitted = 16 (safety ceiling in this hardened build); the final turn offers only submit_result. */
 	maxTurns?: number;
 	options?: PluginInferenceOptions;
 	/** Wall-clock lifetime from acceptance, including admission waits. */

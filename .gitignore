@@ -32,3 +32,4 @@ xai-credentials.json*
 
 # Local hardening progress tracker (never committed)
 TRACKER.md
+REVIEW-FIXES-PLAN.md

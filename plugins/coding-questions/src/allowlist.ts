@@ -2,11 +2,7 @@ export const DEFAULT_ALLOWED_PROGRAMS = [
   "python3",
   "python",
   "node",
-  "bun",
-  "deno",
-  "go",
   "rustc",
-  "cargo",
   "gcc",
   "g++",
   "clang",
@@ -16,7 +12,6 @@ export const DEFAULT_ALLOWED_PROGRAMS = [
   "ruby",
   "php",
   "swift",
-  "dotnet",
 ] as const;
 
 export const BLOCKED_SHELL_PROGRAMS = new Set([

@@ -122,6 +122,15 @@ describe("hardening security regressions", () => {
 		assert.ok(next.error.endsWith("…"));
 	});
 
+	it("injectDemoCsp puts the CSP before any content, even a commented <head>", async () => {
+		const { DEMO_CSP_META: META, injectDemoCsp } = await import("../lib/demo-csp.ts");
+		const out = injectDemoCsp('<!doctype html><!-- <head> --><html><body><script>1</script></body></html>');
+		assert.ok(out.startsWith("<!doctype html>" + META));
+		assert.ok(out.indexOf(META) < out.indexOf("<!--"));
+		assert.ok(injectDemoCsp("<p>x</p>").startsWith(META));
+		assert.equal(injectDemoCsp, (await import("../src/agent/subagents/headless.ts")).injectDemoCsp);
+	});
+
 	it("isSensitivePath blocks expanded SENSITIVE_HOME_PATHS and PATHS.data", () => {
 		for (const rel of [
 			".kube/config",
@@ -133,6 +142,10 @@ describe("hardening security regressions", () => {
 			".config/gh/hosts.yml",
 			".config/gcloud/credentials.db",
 			"Library/Keychains/login.keychain-db",
+			"AppData/Roaming/GitHub CLI/hosts.yml",
+			"AppData/Roaming/gcloud/credentials.db",
+			"AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt",
+			"appdata/roaming/github cli/hosts.yml",
 		]) {
 			assert.equal(isSensitivePath(path.join(homeDir, rel), homeDir, authFile, dataDir), true, rel);
 		}
@@ -255,6 +268,13 @@ describe("hardening security regressions", () => {
 		}
 	});
 
+	it("visual-maker instructions state the static-SVG rules the validator enforces", async () => {
+		const { VISUAL_MAKER_INSTRUCTIONS } = await import("../src/agent/subagents/visual-maker.ts");
+		assert.ok(VISUAL_MAKER_INSTRUCTIONS.includes("no <style> blocks"));
+		assert.ok(VISUAL_MAKER_INSTRUCTIONS.includes("never inside style"));
+		assert.ok(!VISUAL_MAKER_INSTRUCTIONS.includes("or style)"));
+	});
+
 	it("plugin-transport serves SVG plugin assets with Content-Security-Policy: sandbox", async () => {
 		const transport = createPluginTransport({
 			directory: "/tmp/plugins",
@@ -331,7 +351,7 @@ describe("hardening security regressions", () => {
 		assert.equal(DEFAULT_SUBAGENT_MAX_TURNS, 32);
 		assert.equal(DEFAULT_DEMO_BUILDER_MAX_STEPS, 32);
 		assert.equal(DEFAULT_PDF_READER_MAX_ITERATIONS, 24);
-		assert.equal(DEFAULT_RESEARCHER_MAX_TURNS, 20);
+		assert.equal(DEFAULT_RESEARCHER_MAX_TURNS, 32);
 		assert.equal(DEFAULT_VISUAL_MAKER_MAX_ITERATIONS, 16);
 		assert.equal(DEFAULT_SUBMIT_AGENT_MAX_TURNS, 8);
 		assert.equal(DEFAULT_SUBMIT_AGENT_EXPLORE_MAX_TURNS, 24);
@@ -413,7 +433,7 @@ describe("hardening security regressions", () => {
 		assert.equal(defaults.env.LH_AUTH_FILE, path.join(fakeRoot, "auth.json"));
 
 		const custom = resolveStandaloneLaunch({
-			HOSTNAME: "127.0.0.1",
+			LH_HOST: "127.0.0.1",
 			PORT: "4123",
 			LH_DATA_DIR: "./custom-data",
 			LH_AUTH_FILE: "./custom-auth.json",
@@ -422,5 +442,12 @@ describe("hardening security regressions", () => {
 		assert.equal(custom.env.PORT, "4123");
 		assert.equal(custom.env.LH_DATA_DIR, path.resolve("./custom-data"));
 		assert.equal(custom.env.LH_AUTH_FILE, path.resolve("./custom-auth.json"));
+
+		assert.equal(resolveStandaloneLaunch({ HOSTNAME: "my-laptop" }, fakeRoot).env.HOSTNAME, "localhost");
+		assert.equal(resolveStandaloneLaunch({ LH_HOST: " LOCALHOST " }, fakeRoot).env.HOSTNAME, "localhost");
+		assert.equal(resolveStandaloneLaunch({ LH_HOST: "[::1]" }, fakeRoot).env.HOSTNAME, "::1");
+		for (const bad of ["0.0.0.0", "192.168.1.10", "my-laptop", "::"]) {
+			assert.throws(() => resolveStandaloneLaunch({ LH_HOST: bad }, fakeRoot), /LH_HOST must be a loopback address/);
+		}
 	});
 });

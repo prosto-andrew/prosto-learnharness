@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { PDFPageProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { readBoundedPdfFile, standardFontsDir } from "./pdf-ops";
 import { svgImageSource } from "../../../lib/svg-image-source";
+import { injectDemoCsp } from "../../../lib/demo-csp";
 
 /**
  * Verification engines for sub-agents: demos use the app's own Electron
@@ -347,20 +348,7 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 // Demos run strictly offline in memory on about:blank (opaque origin) with
 // a restrictive CSP and network/navigation request blocking.
 
-export const DEMO_CSP_META = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; form-action \'none\'; base-uri \'none\';">';
-
-export function injectDemoCsp(html: string): string {
-	if (/<head(?:\s[^>]*)?>/i.test(html)) {
-		return html.replace(/<head(?:\s[^>]*)?>/i, (tag) => `${tag}${DEMO_CSP_META}`);
-	}
-	if (/<html(?:\s[^>]*)?>/i.test(html)) {
-		return html.replace(/<html(?:\s[^>]*)?>/i, (tag) => `${tag}<head>${DEMO_CSP_META}</head>`);
-	}
-	if (/^\s*<!doctype[^>]*>/i.test(html)) {
-		return html.replace(/^\s*<!doctype[^>]*>/i, (tag) => `${tag}${DEMO_CSP_META}`);
-	}
-	return `${DEMO_CSP_META}${html}`;
-}
+export { DEMO_CSP_META, injectDemoCsp } from "../../../lib/demo-csp";
 
 const ISOLATED_PAGE_SCHEMES = new Set(["about:", "data:", "blob:"]);
 

@@ -8,6 +8,7 @@ import { ChatActionsContext } from "@/components/chat";
 import { downloadFile, slugFilename } from "@/components/artifacts/download";
 import { DispatchCard } from "@/components/artifacts/dispatch-card";
 import type { ArtifactPartProps, DemoResult } from "@/src/core";
+import { injectDemoCsp } from "@/lib/demo-csp";
 
 /**
  * Demo artifact card (W6): while the part is input-available, a job activity
@@ -28,7 +29,7 @@ import type { ArtifactPartProps, DemoResult } from "@/src/core";
 
 // ─── bridge injection + message handling (pure, testable) ───────────────────
 
-export const DEMO_CSP_META = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; form-action \'none\'; base-uri \'none\';">';
+export { DEMO_CSP_META } from "@/lib/demo-csp";
 
 const MAX_DEMO_ERROR_LENGTH = 400;
 
@@ -50,16 +51,9 @@ setTimeout(post,50);
 setTimeout(post,400);
 })();</script>`;
 
-function injectDemoCspMeta(html: string): string {
-	if (/<head(?:\s[^>]*)?>/i.test(html)) return html.replace(/<head(?:\s[^>]*)?>/i, (tag) => `${tag}${DEMO_CSP_META}`);
-	if (/<html(?:\s[^>]*)?>/i.test(html)) return html.replace(/<html(?:\s[^>]*)?>/i, (tag) => `${tag}<head>${DEMO_CSP_META}</head>`);
-	if (/^\s*<!doctype[^>]*>/i.test(html)) return html.replace(/^\s*<!doctype[^>]*>/i, (tag) => `${tag}${DEMO_CSP_META}`);
-	return `${DEMO_CSP_META}${html}`;
-}
-
 /** Inject strict offline CSP + the bridge before </body> (or at the end of a body-less document). */
 export function buildDemoSrcDoc(html: string): string {
-	const guarded = injectDemoCspMeta(html);
+	const guarded = injectDemoCsp(html);
 	if (/<\/body>/i.test(guarded)) return guarded.replace(/<\/body>/i, `${DEMO_BRIDGE_SCRIPT}</body>`);
 	return `${guarded}${DEMO_BRIDGE_SCRIPT}`;
 }
