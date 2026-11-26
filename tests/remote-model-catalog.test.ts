@@ -208,16 +208,17 @@ test("wire behavior survives validated refresh and offline restore; mixed shard 
 	assert.deepEqual(startupModels(scratch), [null, null, null]);
 });
 
-test("Google rows offer only thinking levels Pi 1.5.2's Google transport can send", async (t) => {
+test("Google rows offer only thinking levels Pi 1.6.1's Google transport can send", async (t) => {
 	for (const key of AUTH_PROVIDER_ENV_VARS) delete process.env[key];
 	process.env.GEMINI_API_KEY = "synthetic-gemini-key";
-	// pi.dev's google/gemini-4-neon shape (2026-11-25), written for Pi 1.6.1:
-	// Pi 1.5.2's Google transport throws on "xhigh" but lowercases "HIGH".
-	// "constructor" passes the row schema but is no Google level (prototype key).
+	// pi.dev's google/gemini-4-neon shape (2026-11-25), plus a "max" mapping:
+	// Pi 1.6.1's Google transport sends "xhigh" and lowercases "HIGH", but
+	// still throws on "max". "constructor" passes the row schema but is no
+	// Google level (prototype key).
 	const gemini = {
 		...row, id: "test-gemini-xhigh", provider: "google", api: "google-generative-ai",
 		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-		thinkingLevelMap: { off: null, minimal: "constructor", low: "low", medium: "medium", high: "HIGH", xhigh: "xhigh", max: null },
+		thinkingLevelMap: { off: null, minimal: "constructor", low: "low", medium: "medium", high: "HIGH", xhigh: "xhigh", max: "max" },
 	};
 	t.mock.method(globalThis, "fetch", async (url: URL) => {
 		assert.equal(url.href, "https://pi.dev/api/models/providers/google?types=chat");
@@ -225,22 +226,23 @@ test("Google rows offer only thinking levels Pi 1.5.2's Google transport can sen
 	});
 	assert.equal(await refreshModelCatalog(), "updated");
 	const entry = modelCatalog().models.find((model) => model.provider === "google" && model.id === gemini.id);
-	assert.deepEqual(entry?.supportedLevels, ["low", "medium", "high"]);
-	// A slot or chat that already pinned xhigh runs at the nearest sendable level.
+	assert.deepEqual(entry?.supportedLevels, ["low", "medium", "high", "xhigh"]);
+	// A slot or chat that pinned xhigh runs at xhigh; max clamps to it.
 	const engine = piEngineForSpec({ provider: "google", id: gemini.id, thinkingLevel: "xhigh" });
-	assert.equal(engine.level, "high");
+	assert.equal(engine.level, "xhigh");
+	assert.equal(piEngineForSpec({ provider: "google", id: gemini.id, thinkingLevel: "max" }).level, "xhigh");
 	const model = engine.model;
 	assert.ok(hasApi(model, "google-generative-ai"));
 	for (const level of entry!.supportedLevels) {
 		if (level !== "off") assert.doesNotThrow(() => resolveGoogleThinkingLevel(model, level));
 	}
 
-	// A snapshot saved before this check is re-validated on startup; other
-	// transports send the mapped value verbatim, so theirs stays as fed.
+	// A saved snapshot is re-validated on startup; other transports send the
+	// mapped value verbatim, so theirs stays as fed.
 	const openai = { ...row, id: "test-openai-xhigh", thinkingLevelMap: { ...row.thinkingLevelMap, xhigh: "xhigh" } };
 	const legacy = fs.mkdtempSync(path.join(scratch, "legacy-"));
 	fs.writeFileSync(path.join(legacy, "model-catalog.json"), JSON.stringify({ version: 1, providers: { google: [gemini], openai: [openai] } }));
 	const [restoredGemini, restoredOpenAI] = startupModels(legacy, [gemini, openai]);
-	assert.deepEqual(restoredGemini.thinkingLevelMap, { off: null, minimal: null, low: "low", medium: "medium", high: "HIGH", xhigh: null, max: null });
+	assert.deepEqual(restoredGemini.thinkingLevelMap, { off: null, minimal: null, low: "low", medium: "medium", high: "HIGH", xhigh: "xhigh", max: null });
 	assert.deepEqual(restoredOpenAI.thinkingLevelMap, { minimal: null, high: "high", xhigh: "xhigh" });
 });

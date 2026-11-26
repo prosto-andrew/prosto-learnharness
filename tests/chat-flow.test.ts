@@ -1106,7 +1106,7 @@ describe("the key-presence turn gate (provider-key interlude, 2026-09-25)", () =
 		try {
 			// A REAL catalog model: the engine build AFTER the gate must
 			// resolve — the injected agent replaces the loop, not the build.
-			chatStore.saveSettings(chat.id, { model: { provider: "openai", id: "gpt-4" } });
+			chatStore.saveSettings(chat.id, { model: { provider: "openai", id: "gpt-4o" } });
 			const res = await handleChatRequest(post(chat.id, { type: "text", text: "teach me something" }), agentFactory(scriptedTeacher(defaultLesson).engine));
 
 			assert.equal(res.status, 200, "the env-shadowed key counts as present — the turn runs");

@@ -59,12 +59,12 @@ const rowSchema = z.object({
 	maxTokens: tokens,
 });
 
-// Pi 1.5.2's Google transports send a mapped thinking level only as one of
+// Pi 1.6.1's Google transports send a mapped thinking level only as one of
 // these (case-insensitively) and throw on anything else at request time, e.g.
-// pi.dev's "xhigh", written for a newer Pi. Such a level is dropped (null), so
+// a "max" mapping written for a newer Pi. Such a level is dropped (null), so
 // pickers stop offering it and pinned levels clamp to the nearest sendable one.
 // Typed against Pi: an upgrade that widens Google's levels fails typecheck here.
-const googleThinkingLevels = { minimal: true, low: true, medium: true, high: true } satisfies Record<Exclude<ResolvedGoogleThinkingLevel, "off">, true>;
+const googleThinkingLevels = { minimal: true, low: true, medium: true, high: true, xhigh: true } satisfies Record<Exclude<ResolvedGoogleThinkingLevel, "off">, true>;
 
 // Pi 1.5.2 wire flags, per transport. Unknown behavior fails closed; the
 // descriptors below are bounded values, never arbitrary request arguments.
