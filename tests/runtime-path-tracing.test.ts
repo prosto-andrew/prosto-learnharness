@@ -41,11 +41,13 @@ test("selected/imported custom theme filenames never become deployment assets", 
 	assert.ok(ignored(calls[0]!), `Runtime theme path must not ship: ${calls[0]!.getText(file)}`);
 });
 
-test("plugin runtime and background capture paths never become deployment assets", () => {
-	for (const relative of ["src/server/plugins.ts", "src/agent/background-capture.ts"]) {
+test("plugin runtime, background capture and provider-event paths never become deployment assets", () => {
+	// provider-events: the directory join traced data/debug/provider-events
+	// recordings into the standalone payload (build-server refused, 2026-11-27).
+	for (const [relative, count] of [["src/server/plugins.ts", 5], ["src/agent/background-capture.ts", 2], ["src/agent/provider-events.ts", 2]] as const) {
 		const { file, calls, ignored } = paths(relative);
 		const runtime = calls;
-		assert.equal(runtime.length, relative === "src/server/plugins.ts" ? 5 : 2);
+		assert.equal(runtime.length, count);
 		for (const call of runtime) assert.ok(ignored(call), `Runtime path must not ship: ${call.getText(file)}`);
 	}
 });

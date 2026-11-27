@@ -36,7 +36,7 @@ const CAP_BYTES = 20 * 1024 * 1024;
 export const providerEventsCap = { current: CAP_BYTES };
 
 /** Test seam (the toolTimeoutMs idiom): redirect the output directory. */
-export const providerEventsDir = { current: path.join(PATHS.debug, "provider-events") };
+export const providerEventsDir = { current: path.join(/* turbopackIgnore: true */ PATHS.debug, "provider-events") };
 
 /** The model shape the observer receives (structural — pi passes Model). */
 export interface ProviderEventModel {
