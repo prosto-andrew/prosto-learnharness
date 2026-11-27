@@ -263,6 +263,8 @@ test("compat settings follow Pi's schema for each transport; settings Pi does no
 		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
 		compat: { supportsStrictMode: true, supportsReasoningEffort: false, chatTemplateArgs: { unreviewed: true }, futureFlag: true },
 	};
+	// Nothing Pi declares is left: the model carries no compat at all.
+	const bare = { ...gemini, id: "test-gemini-undeclared", compat: { supportsReasoningEffort: false, futureFlag: true } };
 	const mistral = {
 		...row, id: "test-mistral-strict", provider: "mistral", api: "mistral-conversations", baseUrl: "https://api.mistral.ai",
 		compat: { supportsStrictMode: true, supportsMidConvoSystemMessages: false },
@@ -273,16 +275,16 @@ test("compat settings follow Pi's schema for each transport; settings Pi does no
 		...row, id: "test-groq-priority", provider: "groq", api: "openai-completions", baseUrl: "https://api.groq.com/openai/v1",
 		compat: { vllmPriority: 5000, maxTokensField: "max_tokens", futureFlag: "newer-pi", openRouterRouting: { only: ["ignored"] } },
 	};
-	const shards = new Map<string, unknown[]>([["google", [gemini]], ["mistral", [mistral]], ["groq", [groq]]]);
+	const shards = new Map<string, unknown[]>([["google", [gemini, bare]], ["mistral", [mistral]], ["groq", [groq]]]);
 	t.mock.method(globalThis, "fetch", async (url: URL) => {
 		const provider = url.pathname.split("/").at(-1)!;
 		assert.ok(shards.has(provider), provider);
 		return Response.json(shards.get(provider));
 	});
 	assert.equal(await refreshModelCatalog(), "updated");
-	const expected = [{ supportsStrictMode: true }, mistral.compat, { vllmPriority: 5000, maxTokensField: "max_tokens" }];
-	assert.deepEqual([gemini, mistral, groq].map(({ provider, id }) => piModels().getModel(provider, id)?.compat), expected);
-	assert.deepEqual(startupModels(scratch, [gemini, mistral, groq]).map((model: { compat?: unknown }) => model.compat), expected);
+	const expected = [{ supportsStrictMode: true }, undefined, mistral.compat, { vllmPriority: 5000, maxTokensField: "max_tokens" }];
+	assert.deepEqual([gemini, bare, mistral, groq].map(({ provider, id }) => piModels().getModel(provider, id)?.compat), expected);
+	assert.deepEqual(startupModels(scratch, [gemini, bare, mistral, groq]).map((model: { compat?: unknown }) => model.compat), expected);
 
 	// A value Pi's schema rejects still fails the whole refresh.
 	const good = fs.readFileSync(snapshot, "utf-8");
@@ -295,7 +297,7 @@ test("compat settings follow Pi's schema for each transport; settings Pi does no
 test("Pi's compat schemas declare no object or list setting the import has not reviewed", () => {
 	const option = (setting: Record<string, unknown>) => setting.type === "string" && typeof setting.const === "string";
 	const scalar = (setting: Record<string, unknown>) => ["boolean", "number", "integer"].includes(String(setting.type)) || option(setting)
-		|| (Array.isArray(setting.anyOf) && setting.anyOf.every(option));
+		|| (Array.isArray(setting.anyOf) && setting.anyOf.length > 0 && setting.anyOf.every(option));
 	const structured = new Set(Object.values(CompatSchemasByApi).flatMap((schema) =>
 		Object.entries(schema.properties as Record<string, Record<string, unknown>>).filter(([, setting]) => !scalar(setting)).map(([key]) => key)));
 	// Routing and fallback choices are ignored; templates come only from the bundled profile.

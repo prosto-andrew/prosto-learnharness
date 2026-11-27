@@ -87,7 +87,7 @@ const compatRules = new Map(Object.entries(CompatSchemasByApi).map(([api, schema
 }]));
 
 function catalogRows(body: unknown): unknown[] {
-	// Pi 1.5.x accepts an array, a {models:[]} envelope, or an id map.
+	// Accepted feed shapes: an array, a {models:[]} envelope, or an id map.
 	const rows = Array.isArray(body) ? body : record(body) ? ("models" in body ? body.models : Object.values(body)) : null;
 	if (!Array.isArray(rows) || rows.length > MAX_SHARD_ROWS || !rows.every((row) => record(row) && typeof row.id === "string")) {
 		throw new Error("Invalid pi.dev catalog");
@@ -119,7 +119,7 @@ function checkedCompat(api: Api, baselines: readonly Model<Api>[], raw: unknown)
 		if (!trusted) throw new Error("Unsupported pi.dev model template");
 		return { ...flags, chatTemplateArgs: trusted.chatTemplateArgs, chatTemplateKwargs: trusted.chatTemplateKwargs } as Model<Api>["compat"];
 	}
-	return flags as Model<Api>["compat"];
+	return Object.keys(flags).length ? flags as Model<Api>["compat"] : undefined;
 }
 
 function checkedModels(provider: string, rows: readonly unknown[]): Model<Api>[] {
