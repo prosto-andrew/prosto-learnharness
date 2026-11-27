@@ -4,7 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { normalizeContext } from "@earendil-works/pi-ai";
+import { hasApi, normalizeContext } from "@earendil-works/pi-ai";
+import { resolveGoogleThinkingLevel } from "@earendil-works/pi-ai/api/google-shared";
+import { CompatSchemasByApi } from "@earendil-works/pi-ai/providers/compat-schema";
 import { AUTH_PROVIDER_ENV_VARS } from "../src/core/auth-keys.ts";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "lh-manual-catalog-"));
@@ -38,14 +40,14 @@ const xai = {
 	inputLimits: { maxRequestBytes: 20_000_000, images: { maxPerRequest: 10, resize: { maxWidth: 1600, maxHeight: 1700, maxBytes: 2_000_000, jpegQuality: 85 } } },
 };
 
-function startupModels(snapshotPath: string) {
+function startupModels(snapshotPath: string, rows: readonly { provider: string; id: string }[] = [row, baseten, xai]) {
 	const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
 		let fetches = 0;
 		globalThis.fetch = () => { fetches++; throw new Error("startup must not fetch"); };
 		const { initializeModelCatalog } = await import("./src/server/remote-model-catalog.ts");
 		const { piModels } = await import("./src/agent/models.ts");
 		initializeModelCatalog();
-		const coordinates = ${JSON.stringify([row, baseten, xai].map(({ provider, id }) => [provider, id]))};
+		const coordinates = ${JSON.stringify(rows.map(({ provider, id }) => [provider, id]))};
 		const models = coordinates.map(([provider, id]) => piModels().getModel(provider, id));
 		if (fetches) throw new Error("startup attempted to fetch");
 		console.log(JSON.stringify(models));
@@ -155,7 +157,9 @@ test("wire behavior survives validated refresh and offline restore; mixed shard 
 	const live = [baseten, xai].map(({ provider, id }) => piModels().getModel(provider, id));
 	const [, restoredBaseten, restoredXai] = startupModels(scratch);
 	assert.deepEqual(restoredBaseten.compat, baseten.compat);
-	assert.deepEqual(restoredXai.compat, xai.compat);
+	// supportsReasoningEffort is a Completions setting; Pi's Responses schema
+	// does not declare it, so it has no wire effect there and is dropped.
+	assert.deepEqual(restoredXai.compat, { supportsLongCacheRetention: false });
 	assert.deepEqual(restoredXai.inputLimits, xai.inputLimits);
 
 	// A legitimate new xAI row must not become selectable if another keyed
@@ -205,4 +209,97 @@ test("wire behavior survives validated refresh and offline restore; mixed shard 
 
 	fs.writeFileSync(snapshot, "invalid json");
 	assert.deepEqual(startupModels(scratch), [null, null, null]);
+});
+
+test("Google rows offer only thinking levels Pi 1.6.1's Google transport can send", async (t) => {
+	for (const key of AUTH_PROVIDER_ENV_VARS) delete process.env[key];
+	process.env.GEMINI_API_KEY = "synthetic-gemini-key";
+	// pi.dev's google/gemini-4-neon shape (2026-11-25), plus a "max" mapping:
+	// Pi 1.6.1's Google transport sends "xhigh" and lowercases "HIGH", but
+	// still throws on "max". "constructor" passes the row schema but is no
+	// Google level (prototype key).
+	const gemini = {
+		...row, id: "test-gemini-xhigh", provider: "google", api: "google-generative-ai",
+		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+		thinkingLevelMap: { off: null, minimal: "constructor", low: "low", medium: "medium", high: "HIGH", xhigh: "xhigh", max: "max" },
+	};
+	t.mock.method(globalThis, "fetch", async (url: URL) => {
+		assert.equal(url.href, "https://pi.dev/api/models/providers/google?types=chat");
+		return Response.json([gemini]);
+	});
+	assert.equal(await refreshModelCatalog(), "updated");
+	const entry = modelCatalog().models.find((model) => model.provider === "google" && model.id === gemini.id);
+	assert.deepEqual(entry?.supportedLevels, ["low", "medium", "high", "xhigh"]);
+	// A slot or chat that pinned xhigh runs at xhigh; max clamps to it.
+	const engine = piEngineForSpec({ provider: "google", id: gemini.id, thinkingLevel: "xhigh" });
+	assert.equal(engine.level, "xhigh");
+	assert.equal(piEngineForSpec({ provider: "google", id: gemini.id, thinkingLevel: "max" }).level, "xhigh");
+	const model = engine.model;
+	assert.ok(hasApi(model, "google-generative-ai"));
+	for (const level of entry!.supportedLevels) {
+		if (level !== "off") assert.doesNotThrow(() => resolveGoogleThinkingLevel(model, level));
+	}
+
+	// A saved snapshot is re-validated on startup; other transports send the
+	// mapped value verbatim, so theirs stays as fed.
+	const openai = { ...row, id: "test-openai-xhigh", thinkingLevelMap: { ...row.thinkingLevelMap, xhigh: "xhigh" } };
+	const legacy = fs.mkdtempSync(path.join(scratch, "legacy-"));
+	fs.writeFileSync(path.join(legacy, "model-catalog.json"), JSON.stringify({ version: 1, providers: { google: [gemini], openai: [openai] } }));
+	const [restoredGemini, restoredOpenAI] = startupModels(legacy, [gemini, openai]);
+	assert.deepEqual(restoredGemini.thinkingLevelMap, { off: null, minimal: null, low: "low", medium: "medium", high: "HIGH", xhigh: "xhigh", max: null });
+	assert.deepEqual(restoredOpenAI.thinkingLevelMap, { minimal: null, high: "high", xhigh: "xhigh" });
+});
+
+test("compat settings follow Pi's schema for each transport; settings Pi does not declare are dropped", async (t) => {
+	for (const key of AUTH_PROVIDER_ENV_VARS) delete process.env[key];
+	process.env.GEMINI_API_KEY = "synthetic-gemini-key";
+	process.env.MISTRAL_API_KEY = "synthetic-mistral-key";
+	process.env.GROQ_API_KEY = "synthetic-groq-key";
+	// Pi 1.6.1 declares supportsStrictMode for Google and Mistral. A setting Pi
+	// does not declare for the route has no wire effect there: a Completions
+	// flag or a template on Google, or a flag from a newer Pi.
+	const gemini = {
+		...row, id: "test-gemini-strict", provider: "google", api: "google-generative-ai",
+		baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+		compat: { supportsStrictMode: true, supportsReasoningEffort: false, chatTemplateArgs: { unreviewed: true }, futureFlag: true },
+	};
+	// Nothing Pi declares is left: the model carries no compat at all.
+	const bare = { ...gemini, id: "test-gemini-undeclared", compat: { supportsReasoningEffort: false, futureFlag: true } };
+	const mistral = {
+		...row, id: "test-mistral-strict", provider: "mistral", api: "mistral-conversations", baseUrl: "https://api.mistral.ai",
+		compat: { supportsStrictMode: true, supportsMidConvoSystemMessages: false },
+	};
+	// Pi types vllmPriority as any number. Completions declares routing, which
+	// stays a local choice and is ignored.
+	const groq = {
+		...row, id: "test-groq-priority", provider: "groq", api: "openai-completions", baseUrl: "https://api.groq.com/openai/v1",
+		compat: { vllmPriority: 5000, maxTokensField: "max_tokens", futureFlag: "newer-pi", openRouterRouting: { only: ["ignored"] } },
+	};
+	const shards = new Map<string, unknown[]>([["google", [gemini, bare]], ["mistral", [mistral]], ["groq", [groq]]]);
+	t.mock.method(globalThis, "fetch", async (url: URL) => {
+		const provider = url.pathname.split("/").at(-1)!;
+		assert.ok(shards.has(provider), provider);
+		return Response.json(shards.get(provider));
+	});
+	assert.equal(await refreshModelCatalog(), "updated");
+	const expected = [{ supportsStrictMode: true }, undefined, mistral.compat, { vllmPriority: 5000, maxTokensField: "max_tokens" }];
+	assert.deepEqual([gemini, bare, mistral, groq].map(({ provider, id }) => piModels().getModel(provider, id)?.compat), expected);
+	assert.deepEqual(startupModels(scratch, [gemini, bare, mistral, groq]).map((model: { compat?: unknown }) => model.compat), expected);
+
+	// A value Pi's schema rejects still fails the whole refresh.
+	const good = fs.readFileSync(snapshot, "utf-8");
+	shards.set("google", [{ ...gemini, id: "test-gemini-invalid", compat: { supportsStrictMode: "yes" } }]);
+	await assert.rejects(refreshModelCatalog(), /Invalid pi.dev model compatibility/);
+	assert.equal(fs.readFileSync(snapshot, "utf-8"), good);
+	assert.equal(piModels().getModel("google", "test-gemini-invalid"), undefined);
+});
+
+test("Pi's compat schemas declare no object or list setting the import has not reviewed", () => {
+	const option = (setting: Record<string, unknown>) => setting.type === "string" && typeof setting.const === "string";
+	const scalar = (setting: Record<string, unknown>) => ["boolean", "number", "integer"].includes(String(setting.type)) || option(setting)
+		|| (Array.isArray(setting.anyOf) && setting.anyOf.length > 0 && setting.anyOf.every(option));
+	const structured = new Set(Object.values(CompatSchemasByApi).flatMap((schema) =>
+		Object.entries(schema.properties as Record<string, Record<string, unknown>>).filter(([, setting]) => !scalar(setting)).map(([key]) => key)));
+	// Routing and fallback choices are ignored; templates come only from the bundled profile.
+	assert.deepEqual([...structured].sort(), ["allowedFallbackModels", "chatTemplateArgs", "chatTemplateKwargs", "openRouterRouting", "vercelGatewayRouting"]);
 });

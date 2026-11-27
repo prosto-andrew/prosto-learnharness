@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { hasApi, type Api, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ResolvedGoogleThinkingLevel } from "@earendil-works/pi-ai";
+import { CompatSchemasByApi } from "@earendil-works/pi-ai/providers/compat-schema";
+import { compile } from "@earendil-works/pi-schema";
 import { z } from "zod";
 import { PATHS } from "../../config.ts";
 import { setModelCatalogOverlay } from "../agent/models.ts";
@@ -59,48 +61,33 @@ const rowSchema = z.object({
 	maxTokens: tokens,
 });
 
-// Pi 1.5.2 wire flags, per transport. Unknown behavior fails closed; the
-// descriptors below are bounded values, never arbitrary request arguments.
-const flag = z.boolean().optional();
-const sessionAffinity = z.enum(["openai", "openai-nosession", "openrouter"]).optional();
-const cacheKeyMode = z.enum(["auto", "enabled", "disabled"]).optional();
-const commonOpenAI = {
-	supportsDeveloperRole: flag, supportsMidConvoSystemMessages: flag, supportsStrictMode: flag,
-	supportsOpenAIGrammarTools: flag, supportsLongCacheRetention: flag,
-	sessionAffinityFormat: sessionAffinity, promptCacheKeyMode: cacheKeyMode,
-};
-const completionsCompat = z.strictObject({
-	...commonOpenAI,
-	supportsStore: flag, supportsReasoningEffort: flag, supportsUsageInStreaming: flag, supportsFinishReason: flag,
-	requiresToolResultName: flag, requiresAssistantAfterToolResult: flag, requiresNonNullAssistantContent: flag,
-	requiresToolsWithToolHistory: flag, requiresThinkingAsText: flag, requiresReasoningContentOnAssistantMessages: flag,
-	maxTokensField: z.enum(["max_tokens", "max_completion_tokens"]).optional(),
-	thinkingFormat: z.enum(["openai", "openrouter", "deepseek", "together", "baseten", "zai", "qwen", "chat-template", "qwen-chat-template", "string-thinking", "ant-ling"]).optional(),
-	zaiToolStream: flag, supportsThinkingTokenBudget: flag, supportsMidConvoToolAdditions: flag, sendSessionAffinityHeaders: flag,
-	thinkingTokenBudgetField: z.enum(["thinking_token_budget", "thinking_budget", "thinking_budget_tokens"]).optional(),
-	cacheControlFormat: z.literal("anthropic").optional(),
-	vllmPriority: z.number().int().min(-1000).max(1000).optional(),
-});
-const responsesCompat = z.strictObject({
-	...commonOpenAI,
-	supportsAdditionalTools: flag, supportsToolSearch: flag, supportsExplicitPromptCacheMode: flag,
-	supportsMidConvoEffort: flag, supportsMaxOutputTokens: flag,
-	// Present in bundled data for xAI, even though today's Responses adapter ignores it.
-	supportsReasoningEffort: flag,
-});
-const anthropicCompat = z.strictObject({
-	forceAdaptiveThinking: flag, supportsTemperature: flag, supportsEagerToolInputStreaming: flag, supportsCacheControlOnTools: flag,
-	supportsLongCacheRetention: flag, sendSessionAffinityHeaders: flag, sessionAffinityFormat: z.literal("openrouter").optional(),
-	allowEmptySignature: flag, supportsStrictTools: flag, supportsMidConvoEffort: flag,
-	supportsMidConvoSystemMessages: flag, supportsMidConvoToolChanges: flag, supportsMessageThreads: flag,
-});
-const mistralCompat = z.strictObject({ supportsMidConvoSystemMessages: flag });
-const noCompat = z.strictObject({});
+// Pi 1.6.1's Google transports send a mapped thinking level only as one of
+// these (case-insensitively) and throw on anything else at request time, e.g.
+// a "max" mapping written for a newer Pi. Such a level is dropped (null), so
+// pickers stop offering it and pinned levels clamp to the nearest sendable one.
+// Typed against Pi: an upgrade that widens Google's levels fails typecheck here.
+const googleThinkingLevels = { minimal: true, low: true, medium: true, high: true, xhigh: true } satisfies Record<Exclude<ResolvedGoogleThinkingLevel, "off">, true>;
 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+// Pi's own compat schema for each transport decides which settings a feed row
+// may carry and their values. A setting Pi does not declare for the route has
+// no wire effect, so it is dropped. Of Pi's object and list settings only the
+// reviewed ones below are handled; any other fails closed, so the settings
+// stay bounded values, never arbitrary request arguments.
+const ignoredCompat = new Set(["openRouterRouting", "vercelGatewayRouting", "allowedFallbackModels"]);
+const templateCompat = new Set(["chatTemplateArgs", "chatTemplateKwargs"]);
+const option = (schema: unknown) => record(schema) && schema.type === "string" && typeof schema.const === "string";
+const scalarSetting = (schema: unknown) => record(schema) && (
+	schema.type === "boolean" || schema.type === "number" || schema.type === "integer" || option(schema)
+	|| (Array.isArray(schema.anyOf) && schema.anyOf.length > 0 && schema.anyOf.every(option)));
+const compatRules = new Map(Object.entries(CompatSchemasByApi).map(([api, schema]) => [api, {
+	settings: record(schema.properties) ? schema.properties : {},
+	validator: compile(schema),
+}]));
+
 function catalogRows(body: unknown): unknown[] {
-	// Pi 1.5.x accepts an array, a {models:[]} envelope, or an id map.
+	// Accepted feed shapes: an array, a {models:[]} envelope, or an id map.
 	const rows = Array.isArray(body) ? body : record(body) ? ("models" in body ? body.models : Object.values(body)) : null;
 	if (!Array.isArray(rows) || rows.length > MAX_SHARD_ROWS || !rows.every((row) => record(row) && typeof row.id === "string")) {
 		throw new Error("Invalid pi.dev catalog");
@@ -111,31 +98,28 @@ function catalogRows(body: unknown): unknown[] {
 function checkedCompat(api: Api, baselines: readonly Model<Api>[], raw: unknown): Model<Api>["compat"] {
 	if (raw === undefined) return undefined;
 	if (!record(raw)) throw new Error("Invalid pi.dev model compatibility");
-	// Ignore feed-controlled routing/fallback choices. If a thinking format
-	// needs a template, accept only an exact profile shipped for this route
-	// and pass the bundled copy, never arbitrary feed arguments.
-	const { openRouterRouting: _or, vercelGatewayRouting: _vg, allowedFallbackModels: _af, chatTemplateArgs, chatTemplateKwargs, ...claims } = raw;
-	switch (api) {
-		case "openai-completions": {
-			const flags = completionsCompat.parse(claims);
-			if (flags.thinkingFormat === "baseten" || flags.thinkingFormat === "chat-template" || chatTemplateArgs !== undefined || chatTemplateKwargs !== undefined) {
-				const trusted = baselines.filter((model) => hasApi(model, "openai-completions")).find((model) =>
-					model.compat?.thinkingFormat === flags.thinkingFormat
-					&& isDeepStrictEqual(model.compat?.chatTemplateArgs, chatTemplateArgs)
-					&& isDeepStrictEqual(model.compat?.chatTemplateKwargs, chatTemplateKwargs));
-				if (!trusted) throw new Error("Unsupported pi.dev model template");
-				return { ...flags, chatTemplateArgs: trusted.compat?.chatTemplateArgs, chatTemplateKwargs: trusted.compat?.chatTemplateKwargs };
-			}
-			return flags;
-		}
-		default:
-			if (chatTemplateArgs !== undefined || chatTemplateKwargs !== undefined) throw new Error("Unexpected pi.dev model template");
-			if (api === "openai-responses") return responsesCompat.parse(claims);
-			if (api === "anthropic-messages") return anthropicCompat.parse(claims);
-			if (api === "mistral-conversations") return mistralCompat.parse(claims);
-			noCompat.parse(claims);
-			return undefined;
+	const rule = compatRules.get(api);
+	if (!rule) return undefined;
+	const claims: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		// Ignore feed-controlled routing/fallback choices and settings Pi does not declare here.
+		if (ignoredCompat.has(key) || !Object.hasOwn(rule.settings, key)) continue;
+		if (!templateCompat.has(key) && !scalarSetting(rule.settings[key])) throw new Error("Unsupported pi.dev model compatibility");
+		claims[key] = value;
 	}
+	if (rule.validator.errors(claims).length) throw new Error("Invalid pi.dev model compatibility");
+	// If a thinking format needs a template, accept only an exact profile
+	// shipped for this route and pass the bundled copy, never feed arguments.
+	const { chatTemplateArgs, chatTemplateKwargs, ...flags } = claims;
+	if (flags.thinkingFormat === "baseten" || flags.thinkingFormat === "chat-template" || chatTemplateArgs !== undefined || chatTemplateKwargs !== undefined) {
+		const trusted = baselines.map((model): Record<string, unknown> | undefined => model.compat).find((compat) =>
+			compat?.thinkingFormat === flags.thinkingFormat
+			&& isDeepStrictEqual(compat?.chatTemplateArgs, chatTemplateArgs)
+			&& isDeepStrictEqual(compat?.chatTemplateKwargs, chatTemplateKwargs));
+		if (!trusted) throw new Error("Unsupported pi.dev model template");
+		return { ...flags, chatTemplateArgs: trusted.chatTemplateArgs, chatTemplateKwargs: trusted.chatTemplateKwargs } as Model<Api>["compat"];
+	}
+	return Object.keys(flags).length ? flags as Model<Api>["compat"] : undefined;
 }
 
 function checkedModels(provider: string, rows: readonly unknown[]): Model<Api>[] {
@@ -155,6 +139,13 @@ function checkedModels(provider: string, rows: readonly unknown[]): Model<Api>[]
 		const { id, api: _api, baseUrl: _baseUrl, ...metadata } = rowSchema.parse(row);
 		if ((row.provider !== undefined && row.provider !== provider) || models.has(id) || (route.api === "google-generative-ai" && id.includes(":"))) {
 			throw new Error("Invalid pi.dev model identity");
+		}
+		const thinkingLevelMap = metadata.thinkingLevelMap;
+		if (thinkingLevelMap && (route.api === "google-generative-ai" || route.api === "google-vertex")) {
+			for (const level of ["minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+				const mapped = thinkingLevelMap[level];
+				if (typeof mapped === "string" && !Object.hasOwn(googleThinkingLevels, mapped.toLowerCase())) thinkingLevelMap[level] = null;
+			}
 		}
 		// Model.samplingParams and its per-level variant allow arbitrary
 		// request keys in Pi. Do not silently import models that require them.
