@@ -12,14 +12,14 @@ const project = fileURLToPath(new URL("../", import.meta.url));
 const bundle = await build({ stdin: { contents: `export {activate} from ${JSON.stringify(path.join(project, "src/main.ts"))};`,
   resolveDir: project, loader: "ts" }, bundle: true, write: false, platform: "node", format: "esm",
   plugins: [{ name: "controlled-theme-io", setup(builder) {
-    builder.onLoad({ filter: /\/src\/theme\.ts$/ }, () => ({ loader: "js", contents: `
+    builder.onLoad({ filter: /[/\\]src[/\\]theme\.ts$/ }, () => ({ loader: "js", contents: `
       export const appPalette=()=>globalThis.__drawingThemeRace.palette;
       export const recolorReference=(draft,ctx,signal)=>globalThis.__drawingThemeRace.render(draft,signal);` }));
-    builder.onLoad({ filter: /\/src\/capture\.ts$/ }, () => ({ loader: "js", contents: `
+    builder.onLoad({ filter: /[/\\]src[/\\]capture\.ts$/ }, () => ({ loader: "js", contents: `
       export const exportSheet=async(captured,signal)=>{signal.throwIfAborted();const probe=globalThis.__drawingThemeRace;
         probe.exports.push(captured);if(probe.exportWait)await probe.exportWait;
         return {type:'image',mimeType:'image/png',data:'controlled-png'};};` }));
-    builder.onLoad({ filter: /\/src\/sheet\.ts$/ }, () => ({ loader: "js", contents: `
+    builder.onLoad({ filter: /[/\\]src[/\\]sheet\.ts$/ }, () => ({ loader: "js", contents: `
       export const mountSheet=(_container,_ctx,sheets,state,input)=>{const probe=globalThis.__drawingThemeRace;Object.assign(probe,{sheets,state});
         probe.mounts.push({input,draft:state.draft});
         return {flush(){},dispose(){},canUseEditingShortcuts(){return false},canUndo(){return false},undo(){},togglePenEraser(){},selectHand(){}};};` }));

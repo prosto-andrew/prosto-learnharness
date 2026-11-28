@@ -114,10 +114,10 @@ const project = fileURLToPath(new URL("../", import.meta.url));
 const refreshBundle = await build({ stdin: { contents: `export {activate} from ${JSON.stringify(path.join(project, "src/main.ts"))};`,
   resolveDir: project, loader: "ts" }, bundle: true, write: false, platform: "node", format: "esm",
   plugins: [{ name: "controlled-mount-and-export", setup(builder) {
-    builder.onLoad({ filter: /\/src\/capture\.ts$/ }, () => ({ loader: "js", contents: `
+    builder.onLoad({ filter: /[/\\]src[/\\]capture\.ts$/ }, () => ({ loader: "js", contents: `
       export const exportSheet=async()=>({type:'image',mimeType:'image/png',data:'controlled-png'});
       export const captureBackground=async()=>{throw new Error('not used');};` }));
-    builder.onLoad({ filter: /\/src\/sheet\.ts$/ }, () => ({ loader: "js", contents: `
+    builder.onLoad({ filter: /[/\\]src[/\\]sheet\.ts$/ }, () => ({ loader: "js", contents: `
       export const mountSheet=(_container,_ctx,sheets,state)=>{Object.assign(globalThis.__drawingRefreshProbe,{sheets,state});
         return {flush(){},dispose(){},canUseEditingShortcuts(){return false},canUndo(){return false},undo(){},togglePenEraser(){},selectHand(){}};};` }));
   } }] });
